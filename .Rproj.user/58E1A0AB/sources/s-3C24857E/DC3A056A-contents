@@ -1,0 +1,324 @@
+---
+title: "Treasury TR"
+subtitle: "Generating Total Returns Data from US Treasury Bond Yields"
+author: "Martin Geissmann"
+date: "16 January 2021"
+output: pdf_document
+classoption: 
+  - a4paper
+fontsize: 12pt
+geometry: margin=2cm
+bibliography: literature.bib
+---
+
+```{r setup, echo=F, message=F, warning=F}
+knitr::opts_chunk$set(echo=T, warning=F, message=F)
+library(kableExtra)
+```
+
+# Introduction
+
+While Treasury yields are easy to come by[^FRED], total return (TR) indices are not. The latter is earned by investors, and is therefore of paramount importance e.g. when simulating a treasury-stock diversified portfolio. A supplier for proprietary TR Treasury index data is CRSP[^CRSP]. Their data can be purchased or accesses trough a handful of commercial research platforms.
+
+[^FRED]: E.g. on the Federal Reserve Bank of St. Louis's data portal "FRED", see https://fred.stlouisfed.org/series/DGS5 (5 year), https://fred.stlouisfed.org/series/DGS10 (10 year), https://fred.stlouisfed.org/series/DGS20 (20 years), https://fred.stlouisfed.org/series/DGS30 (30 years)  
+
+[^CRSP]: Center for Research in Security Prices, LLC, see http://www.crsp.org/
+
+@swinkels2019treasury compute returns from publicly available yield-to-maturity data using *standard (fixed-income) textbook formulas*.[^quantoverflow]
+
+[^quantoverflow]: See also the following post on quant.stackexchange: https://quant.stackexchange.com/a/57403
+
+$$R_t = \text{yield income} - \text{duration}\cdot \Delta y + \frac{1}{2} \cdot \text{convexity} \cdot (\Delta y)^2$$
+
+where
+
+$$\text{yield income} = (1+y_t)^{\Delta t}-1 \approx y_t {\Delta t}$$
+
+$$\text{duration} = \frac{1}{y_t} {z_t}^{2 M}$$
+
+$$\text{convexity} = C_1 - C_2$$
+
+and
+
+$$z_t = 1+\frac{y_t}{2}$$
+
+$$C_1 = \frac{2}{y_t^2} (1-{z_t}^{-2 M})$$
+
+$$C_2 = \frac{2 M}{y_t} {z_t}^{-2 M - 1}$$
+
+$M$ is the maturity in years (e.g. 10), $\Delta y = y_{t+\Delta t} - y_t$ is the yield change from the previous observation (e.g. the previous month's yield), and $t$ is the time scale, e.g. $\Delta t = 1/12$ for monthly.
+
+# Calculation in R
+
+First, we download treasury yield data from FRED, for which the `tidyquant::tq_get` comes handy. Besides the 5, 10, and 30 year constant maturity, also the 6 months, 1, 2, 3, 7, 20 year are available. Furthermore, one can get the 1, 3, and 6 month (*T-Bills*).
+
+```{r, message=F, warning=F}
+library(tidyverse)
+library(tidyquant)
+library(scales)
+```
+
+```{r, eval = F}
+t5_yield <- tq_get("DGS5", get = "economic.data", 
+                   from = as.Date("1950-01-01")) %>% 
+  transmute(date, yield = price/100, yield = na.locf0(yield))
+t10_yield <- tq_get("DGS10", get = "economic.data", 
+                    from = as.Date("1950-01-01")) %>% 
+  transmute(date, yield = price/100, yield = na.locf0(yield))
+t30_yield <- tq_get("DGS30", get = "economic.data", 
+                    from = as.Date("1950-01-01")) %>% 
+  transmute(date, yield = price/100, yield = na.locf0(yield))
+```
+
+```{r, echo = F, eval = F}
+t5_yield  %>% saveRDS("data/t5_yield.RDS")
+t10_yield %>% saveRDS("data/t10_yield.RDS")
+t30_yield %>% saveRDS("data/t30_yield.RDS")
+```
+
+```{r, echo = F}
+t5_yield  <- readRDS("data/t5_yield.RDS")
+t10_yield <- readRDS("data/t10_yield.RDS")
+t30_yield <- readRDS("data/t30_yield.RDS")
+```
+
+Integrate the formulas for the *modified duration*, *convexity*, and *(total) return* from above into functions. To be able to use the return function in a dplyr style (in `mutate`), this has to be vectorized.
+
+It is to note that for daily calculation the 261 day per year notion is used, which is the average number of observations per year in the FRED yield data.
+
+```{r}
+mod_dur <- function(yield, maturity) {
+  out <- (1-(1/(1+0.5*yield)^(2*maturity)))/(yield)
+  return(out)
+}
+
+convexity <- function(yield, maturity) {
+  out <- (2/(yield)^2)*(1-(1/(1+yield/2)^(2*maturity)))-
+    (2*maturity)/((yield)*(1+yield/2)^(2*maturity+1))
+  return(out)
+}
+
+return_m <- function(yield, yield_lag, maturity, 
+                     mdur = mod_dur(yield, maturity), 
+                     convex = convexity(yield, maturity), 
+                     scale = 261) {
+  if (is.na(yield_lag)) {
+    return(NA_real_)
+  }
+  out <- (-mdur*(yield-yield_lag) + 
+            0.5*convex*(yield-yield_lag)^2 + 
+            ((1+yield_lag)^(1/scale)-1))
+  return(out)
+}
+
+return_m_V <- Vectorize(return_m)
+```
+
+## Monthy
+
+```{r}
+monthly_yields <- bind_rows(t5_yield %>% mutate(maturity = 5),
+                            t10_yield %>% mutate(maturity = 10),
+                            t30_yield %>% mutate(maturity = 30)) %>% 
+  group_by(maturity, m = floor_date(date, "months")) %>% 
+  filter(date == max(date)) %>% 
+  ungroup() %>% 
+  select(-m)
+
+monthly_tr <- monthly_yields %>% 
+  group_by(maturity) %>% 
+  mutate(r = return_m_V(yield = yield, yield_lag = lag(yield), 
+                        maturity = maturity, scale = 12))
+```
+
+## Weekly
+
+```{r}
+weekly_yields <- bind_rows(t5_yield %>% mutate(maturity = 5),
+                           t10_yield %>% mutate(maturity = 10),
+                           t30_yield %>% mutate(maturity = 30)) %>% 
+  group_by(maturity, m = floor_date(date, "weeks")) %>% 
+  filter(date == max(date)) %>% 
+  ungroup() %>% 
+  select(-m)
+
+weekly_tr <- weekly_yields %>% 
+  group_by(maturity) %>% 
+  mutate(r = return_m_V(yield = yield, yield_lag = lag(yield), 
+                        maturity = maturity, scale = 52))
+```
+
+## Daily
+
+```{r}
+daily_yields <- bind_rows(t5_yield %>% mutate(maturity = 5),
+                          t10_yield %>% mutate(maturity = 10),
+                          t30_yield %>% mutate(maturity = 30))
+
+daily_tr <- daily_yields %>% 
+  group_by(maturity) %>% 
+  mutate(r = return_m_V(yield = yield, yield_lag = lag(yield), 
+                        maturity = maturity, scale = 261))
+```
+
+# Evaluation
+
+@swinkels2019treasury compares the results to CRSP data and to other sources (Global Financial Data, Ibbotson, Bloomberg). In a regression of the 10-year treasury on the CRSP index data, an intercept of close to zero and a slope of close to one is reported (and an R-square of 0.934). The return series calculated by us match the reported statistics for the monthly calculation.[^spreadsheet]
+
+Our calculation for the daily and weekly frequencies are insignificantly different from the monthly calculation (see Chart 1). The difference is caused by daily fluctuations in the yield, which are not captured in an end-of-month view.
+
+[^spreadsheet]: @swinkels2019treasury provides calculations in a spreadsheet available here: https://www.mdpi.com/2306-5729/4/3/91#supplementary
+
+```{r, fig.height=7}
+all_tr <- bind_rows(monthly_tr %>% mutate(freq = "monthly"),
+                    weekly_tr  %>% mutate(freq = "weekly"),
+                    daily_tr   %>% mutate(freq = "daily")) %>% 
+  filter(!is.na(r)) %>% 
+  group_by(freq, maturity) %>% 
+  mutate(p = cumprod(1+r)*100) %>% 
+  ungroup()
+
+all_tr %>% 
+  ggplot(aes(x = date, y = p, color = freq)) +
+  geom_line(linetype = 2) +
+  scale_x_date(date_breaks = "2 years", date_labels = "%Y") +
+  scale_y_log10() +
+  facet_wrap(~paste(maturity, "Y"), ncol = 1) +
+  labs(title = "Chart 1: Cumulative Returns",
+       x = "", y = "TR index with initial value $100", color = "") +
+  theme_classic() +
+    theme(legend.position = "top", 
+        plot.title = element_text(hjust = 0.5),
+        axis.text.x = element_text(angle = 90, vjust = 0.5))
+```
+
+```{r}
+all_tr %>% 
+  filter(freq == "monthly") %>% 
+  group_by(maturity) %>% 
+  tq_mutate(select = r, mutate_fun = runSD, n = 12, col_rename = "vola12") %>% 
+  ggplot(aes(x = date, y = vola12*sqrt(12), color = paste(maturity, "Y"))) +
+  geom_line() +
+  scale_x_date(date_breaks = "2 years", date_labels = "%Y") +
+  scale_y_continuous(labels = percent) +
+  labs(title = "Chart 2: Rolling 12-Month Volatility", 
+       x = "", y = "Annualized Standard Deviation", color = "") +
+  theme_classic() +
+    theme(legend.position = "top", 
+        plot.title = element_text(hjust = 0.5),
+        axis.text.x = element_text(angle = 90, vjust = 0.5))
+```
+
+```{r}
+all_tr %>% 
+  filter(freq == "monthly") %>% 
+  group_by(maturity) %>% 
+  filter(any(min(date) == as.Date("1962-02-28"))) %>% 
+  tq_performance(Ra = r, 
+                 performance_fun = table.AnnualizedReturns, scale = 12) %>% 
+  transmute(maturity = paste(maturity, "Y"), 
+            AnnualizedReturn = percent(AnnualizedReturn, accuracy = 0.1), 
+            AnnualizedStdDev = percent(AnnualizedStdDev, accuracy = 0.1)) %>% 
+  kable(caption = paste0("Annualized Return and Volatility Feb 1962 - ", 
+                         format(max(all_tr$date), "%b %Y"))) %>% 
+  kable_styling(latex_options = "hold_position")
+
+all_tr %>% 
+  filter(freq == "monthly") %>% 
+  group_by(maturity) %>% 
+  filter(date >= as.Date("1977-03-31")) %>% 
+  tq_performance(Ra = r, 
+                 performance_fun = table.AnnualizedReturns, scale = 12) %>% 
+  transmute(maturity = paste(maturity, "Y"), 
+            AnnualizedReturn = percent(AnnualizedReturn, accuracy = 0.1), 
+            AnnualizedStdDev = percent(AnnualizedStdDev, accuracy = 0.1)) %>% 
+  kable(caption = paste0("Annualized Return and Volatility Mar 1977 - ", 
+                         format(max(all_tr$date), "%b %Y"))) %>% 
+  kable_styling(latex_options = "hold_position")
+```
+
+# Extra: Risk-Free Return
+
+The risk-free rate is probably one of the most important pieces of data in a financial economist's toolbox. (From an US investor's perspective,) Generally the returns of 1- or 3-Month US T-Bills are used. The excess returns from Kenneth French's data[^ffdata] is reported over the 1-Month rate from *Ibbotson and Associates Inc.*. As such, K. French's datalibrary is a common source for the risk-free return with daily data going back until July 1926.
+
+[^ffdata}: See https://mba.tuck.dartmouth.edu/pages/faculty/ken.french/data_library.html
+
+```{r, eval = F}
+t1m_yield <- tq_get("DGS1MO", get = "economic.data", 
+                   from = as.Date("1950-01-01")) %>% 
+  transmute(date, yield = price/100, yield = na.locf0(yield))
+```
+
+```{r, echo = F, eval = F}
+t1m_yield  %>% saveRDS("data/t1m_yield.RDS")
+```
+
+```{r, echo = F}
+t1m_yield  <- readRDS("data/t1m_yield.RDS")
+```
+
+We use K. French's risk-free data to verify our calculation. Chart 3 shows the daily rolling annualized rate. Our series tracks the reported risk-free rate quite accurately. In the daily frequency a higher oscillation is observed, however no trend deviation. This is confirmed in a linear regression which results in a slope very close to one, intercept of 0, and an R-Square of 0.978 on a monthly basis (see Table 3).
+
+```{r}
+Rf <- read_csv("data/F-F_Research_Data_Factors_daily.CSV",
+               skip = 4) %>% 
+  filter(!is.na(X1)) %>% 
+  mutate(date = ymd(X1)) %>% 
+  transmute(date, r = RF/100)
+```
+
+```{r}
+daily_tr_1m <- t1m_yield %>% 
+  mutate(r = return_m_V(yield = yield, yield_lag = lag(yield), 
+                        maturity = 1/12, scale = 261))
+
+daily_tr_1m %>% 
+  filter(!is.na(r)) %>%
+  mutate(series = "our calculation") %>% 
+  bind_rows(Rf %>% filter(date >= as.Date("2000-01-01")) %>% 
+              mutate(series = "K. French/Ibbotson")) %>%
+  group_by(series) %>% 
+  tq_mutate(select = r, mutate_fun = runMean, n = 30, 
+            col_rename = "rolling_r") %>%
+  ggplot(aes(x = date, y = (1+rolling_r)^261-1, color = series)) +
+  geom_line(alpha = 0.8) +
+  scale_y_continuous(labels = percent) +
+  scale_x_date(date_breaks = "1 year", date_labels = "%Y") +
+  labs(title = "Chart 3: Annualized Risk-Free Return (Rolling 30-Day Mean)", 
+       x = "", y = "Annualized Return",
+       color = "") +
+  theme_classic() +
+  theme(legend.position = "top", 
+        plot.title = element_text(hjust = 0.5),
+        axis.text.x = element_text(angle = 90, vjust = 0.5))
+  
+```
+
+```{r}
+d <- daily_tr_1m %>% 
+  filter(!is.na(r)) %>%
+  mutate(series = "our calculation") %>% 
+  bind_rows(Rf %>% filter(date >= as.Date("2000-01-01")) %>% 
+              mutate(series = "K. French/Ibbotson")) %>% 
+  select(-yield) %>% 
+  pivot_wider(names_from = series, values_from = r) %>% 
+  arrange(date) %>% 
+  filter(between(date, as.Date("2001-08-01"), 
+                 as.Date("2020-11-30"))) %>% 
+  group_by(month = floor_date(date, "months")) %>% 
+  summarise(`K. French/Ibbotson` = prod(1+`K. French/Ibbotson`, 
+                                        na.rm = T)^12-1,
+            `our calculation` = prod(1+`our calculation`, 
+                                     na.rm = T)^12-1)
+
+model <- lm(data = d, formula = `our calculation` ~ `K. French/Ibbotson`)
+
+broom::tidy(model) %>% 
+  kable(caption = paste0("Linear Regression of the Calculated", 
+                         "Monthly Risk-Free Rate on Data From Ibbotson")) %>% 
+  kable_styling(latex_options = "hold_position")
+```
+
+
+
+# References
