@@ -1,0 +1,2043 @@
+---
+title: "Lumber: Worth Its Weight in Gold - Offense and Defense in Active Portfolio Management, Michael Gayed 2014"
+subtitle: "Replication Update"
+author: "Martin Geissmann"
+date: "12 January 2021"
+output: 
+  html_document:
+    code_folding: hide
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = F, warning = F)
+
+Sys.setlocale("LC_TIME", "en_US.UTF-8")
+```
+
+# Data
+
+```{r}
+# R packages used
+library(tidyverse)
+library(tidyquant)
+library(lubridate)
+library(readxl)
+library(DT)
+library(RcppRoll) # fast rolling window functions
+library(scales)
+library(ggrepel)
+library(PerformanceAnalytics)
+library(rlang)
+
+library(clipr)
+
+date_max <- as.Date("2020-11-30")
+date_min <- as.Date("1986-07-01")
+date_min_nov <- as.Date("1986-11-01")
+
+as_dt <- function(data, caption = "") {
+  data %>% 
+    datatable(class = "compact", caption = caption, rownames = F,
+              option = list(dom = "t", pageLength = 999)) %>% 
+    return()
+}
+
+calc_drawdown <- function(Ra) {
+  # same calculation formula as PerformanceAnalytics::Drawdowns geometric = FALSE
+  
+  p <- 1 + cumprod(1 + Ra) - 1
+  m <- cummax(c(1, p))[-1]
+  d <- p/m - 1
+  
+  return(d)
+}
+
+tibble_to_xts <- function(x) {
+  xts(x = x %>% select(-date),
+      order.by = x$date)
+}
+
+xts_to_tibble <- function(x) {
+  as_tibble(x) %>% 
+    mutate(date = index(x)) %>% 
+    select(date, everything()) %>% 
+    return()
+}
+```
+
+
+```{r}
+calc_ret <- function(data, series = NULL) {
+  out <- data %>% 
+    transmute(date, r = adjusted/lag(adjusted)-1)
+  
+  if (!is.null(series)) {
+    out <- out %>% 
+      mutate(series = series)
+  }
+  
+  return(out)
+}
+
+change_ret_freq <- function(data, freq = "weeks") {
+
+  if ("series" %in% colnames(data)) {
+    out <- data %>% 
+      group_by(series, date = floor_date(date, freq)) %>% 
+      summarise(r = prod(1+r, na.rm = T)-1) %>% 
+      ungroup()
+  } else {
+    out <- data %>% 
+      group_by(date = floor_date(date, freq)) %>% 
+      summarise(r = prod(1+r, na.rm = T)-1) %>% 
+      ungroup()
+  }
+    
+  return(out)
+}
+
+calc_signal <- function(data, freq = "weeks", n = 13, signal = "lumber > gold",
+                        rm.na.signal = T) {
+  
+  out <- data %>% 
+    change_ret_freq(freq = freq) %>% 
+    group_by(series) %>% 
+    mutate(r_roll = RcppRoll::roll_prod(1+r, na.rm = T, n = n, align = "right", fill = NA_real_)-1) %>% 
+    select(-r) %>% 
+    filter(!is.na(r_roll)) %>% 
+    pivot_wider(names_from = series, values_from = r_roll) %>% 
+    arrange(date) %>% 
+    mutate(signal := !!parse_expr(signal),
+           signal = lag(signal))
+  
+  if (rm.na.signal) {
+    out <- out %>% 
+      filter(!is.na(signal))
+  }
+  
+  out <- out %>% 
+    rename(!!paste0(signal) := signal)
+  
+  return(out)
+}
+```
+
+```{r, eval = F}
+building_permits <- tq_get(get = "economic.data", "PERMIT", from = as.Date("1960-01-01"))
+
+recessions <- tq_get(get = "economic.data", "USREC", from = as.Date("1960-01-01"))
+
+recessions_from_to <- recessions %>% 
+  mutate(from = case_when(price == 1 & lag(price) == 0 ~ date,
+                          price == 1 & is.na(lag(price)) ~ date,
+                          T ~ NA_Date_),
+         to = case_when(price == 1 & lead(price) == 0 ~ date,
+                        price == 1 & is.na(lead(price)) ~ date,
+                        T ~ NA_Date_)) %>% 
+  filter(price == 1) %>% 
+  mutate(from = na.locf0(from),
+         to = na.locf0(to)) %>% 
+  filter(from < to) %>% 
+  select(symbol, from, to) %>% 
+  distinct()
+
+building_permits %>% saveRDS("data/building_permits.RDS")
+recessions_from_to %>% saveRDS("data/recessions_from_to.RDS")
+```
+
+```{r, eval = F}
+lumber <- tq_get(get = "quandl", "CHRIS/CME_LB1")
+
+lumber %>% saveRDS("data/lumber.RDS")
+
+copper <- tq_get(get = "quandl", "CHRIS/CME_HG1")
+
+copper %>% saveRDS("data/copper.RDS")
+
+```
+
+```{r}
+ff_long <- read_csv("data/F-F_Research_Data_Factors_daily.CSV", skip = 4) %>% 
+  filter(!is.na(X1)) %>% 
+  mutate(date = ymd(X1)) %>% 
+  select(-X1) %>% 
+  select(date, everything()) %>% 
+  mutate(Mkt = `Mkt-RF` + RF) %>% 
+  select(-SMB, -HML) %>% 
+  pivot_longer(cols = -date, names_to = "series", values_to = "r") %>% 
+  arrange(series, date) %>% 
+  group_by(series) %>% 
+  mutate(r = r/100,
+         p = cumprod(1+r)) %>% 
+  ungroup()
+
+mkt <- ff_long %>%
+  filter(series == "Mkt") %>%
+  select(date, r)
+
+rf <- ff_long %>% 
+  filter(series == "RF") %>% 
+  select(date, r)
+```
+
+```{r, eval = F}
+
+# alt source: https://fred.stlouisfed.org/series/VXOCLS
+# 
+# vxo_archive <- read_excel("data/vxoarchive.xls", skip = 2) %>% 
+#   mutate(Date = as.Date(Date))
+# 
+# vxo_current <- read_csv("data/vxocurrent.csv", skip = 2) %>% 
+#   mutate(Date = mdy(Date))
+# 
+# vxo <- bind_rows(vxo_archive,
+#                  vxo_current)
+
+# source: https://www.cboe.com/index/dashboard/vxo#vxo-overview
+vxo <- tq_get("VXOCLS", get = "economic.data", from = as.Date("1950-01-01")) %>% 
+  filter(!is.na(price))
+  
+vxo %>% saveRDS("data/vxo.RDS")
+```
+
+We do not have the BofAML **Treasury** indices yet, but we should get it soon from CRSP. We use historical values of the Bloomberg Barclays U.S. Treasury indices for now.
+
+While the BofAML indices go back to 1986, the BB only go to 1992.
+
+```{r, eval = F}
+BofA_7_10yrs_corporate <- tq_get(get = "economic.data", "BAMLCC4A0710YTRIV", from = as.Date("1950-01-01"))
+
+BofA_7_10yrs_corporate %>% saveRDS("data/BofA_7_10yrs_corporate.RDS")
+```
+
+
+
+```{r, eval = F}
+spx <- tq_get("^GSPC", from = as.Date("1950-01-01"))
+spxtr <- tq_get("^SP500TR", from = as.Date("1950-01-01"))
+
+spx %>% saveRDS("data/spx.RDS")
+spxtr %>% saveRDS("data/spxtr.RDS")
+```
+
+```{r}
+# Gold Price in US Dollars (IPGUSD on YCharts)
+
+# gold <- read_csv("data/IGPUSD_data.csv") %>%
+#   transmute(date = Period, adjusted = .[[2]]) %>%
+#   arrange(date)
+
+gold <- read_excel("data/xau MG data.xlsx", range = "D1:E12458") %>%
+  transmute(date = as.Date(.[[1]]), adjusted = .[[2]]) %>%
+  arrange(date) %>%
+  filter(date >= as.Date("1974-12-31"))
+
+gold_full <- read_excel("data/xau MG data.xlsx", range = "D1:E12458") %>%
+  transmute(date = as.Date(.[[1]]), adjusted = .[[2]]) %>%
+  arrange(date)
+```
+
+```{r}
+treasuries_raw <- read_excel("data/Treasury_index.xlsx", skip = 13, na = "#N/A N/A") %>% 
+  filter(row_number() != 1)
+  
+bb_1_3_yr_index <- treasuries_raw %>% 
+  transmute(date = as.Date(as.numeric(`...1`), origin = "1899-12-30"), adjusted = as.double(`LT01TRUU Index`)) %>% 
+  filter(!is.na(adjusted))
+
+bb_3_5_yr_index <- treasuries_raw %>% 
+  transmute(date = as.Date(as.numeric(`...1`), origin = "1899-12-30"), adjusted = as.double(`LT02TRUU Index`)) %>% 
+  filter(!is.na(adjusted))
+
+bb_5_7_yr_index <- treasuries_raw %>% 
+  transmute(date = as.Date(as.numeric(`...1`), origin = "1899-12-30"), adjusted = as.double(`LT03TRUU Index`)) %>% 
+  filter(!is.na(adjusted))
+
+bb_7_10_yr_index <- treasuries_raw %>% 
+  transmute(date = as.Date(as.numeric(`...1`), origin = "1899-12-30"), adjusted = as.double(`LT09TRUU Index`)) %>% 
+  filter(!is.na(adjusted))
+
+bb_10_15_yr_index <- treasuries_raw %>% 
+  transmute(date = as.Date(as.numeric(`...1`), origin = "1899-12-30"), adjusted = as.double(`I13228US Index`)) %>% 
+  filter(!is.na(adjusted))
+
+bb_15_plus_yr_index <- treasuries_raw %>% 
+  transmute(date = as.Date(as.numeric(`...1`), origin = "1899-12-30"), adjusted = as.double(`I20812US Index`)) %>% 
+  filter(!is.na(adjusted))
+
+bb_total_yr_index <- treasuries_raw %>% 
+  transmute(date = as.Date(as.numeric(`...9`), origin = "1899-12-30"), adjusted = as.double(`LUATTRUU Index`)) %>% 
+  filter(!is.na(adjusted), !is.na(date))
+```
+
+Morgan Stanley Cyclical Index was discontinued in 2015. What alternative could we use?
+
+* checked the MSCI US Cyclical Index, however it's only available in monthly frequency
+
+```{r, eval = F}
+# CBOE S&P 500 Buy Write Index (^BXM)
+# Here from Yahoo Finance, it would also be available on YCharts
+bxm <- tq_get("^BXM", from = as.Date("1960-01-01"))
+
+bxm %>% saveRDS("data/bxm.RDS")
+
+# Russell 2000
+rut <- tq_get("^RUT", from = as.Date("1960-01-01"))
+
+rut %>% saveRDS("data/rut.RDS")
+
+# Morgan Stanley Cyclical Index (discontinued)
+cyc <- tq_get("^CYC", from = as.Date("1960-01-01"))
+
+cyc %>% saveRDS("data/cyc.RDS")
+
+spy <- tq_get("SPY", from = as.Date("1960-01-01"))
+
+spy %>% saveRDS("data/spy.RDS")
+
+iwm <- tq_get("IWM", from = as.Date("1960-01-01"))
+
+iwm %>% saveRDS("data/iwm.RDS")
+
+nasdaq <- tq_get("^IXIC", from = as.Date("1950-01-01"))
+
+nasdaq %>% saveRDS("data/nasdaq.RDS")
+```
+
+```{r, eval = F}
+# Treasury: iShares U.S. Treasury Bond ETF (*GOVT*)
+ief <- tq_get("IEF", from = as.Date("1960-01-01"))
+
+ief %>% saveRDS("data/ief.RDS")
+
+# Treasury: iShares 3-7 Year Treasury Bond ETF (*IEI*)
+iei <- tq_get("IEI", from = as.Date("1960-01-01"))
+
+iei %>% saveRDS("data/iei.RDS")
+
+# Market Broad: SPDR S&P 500 ETF (*SPY*)
+spy <- tq_get("SPY", from = as.Date("1960-01-01"))
+
+spy %>% saveRDS("data/spy.RDS")
+
+# Market Small Cap: iShares Russell 2000 ETF (*IWM*)
+iwm <- tq_get("IWM", from = as.Date("1960-01-01"))
+
+iwm %>% saveRDS("data/iwm.RDS")
+
+# Treasury: iShares U.S. Treasury Bond ETF (*GOVT*)
+govt <- tq_get("govt", from = as.Date("1960-01-01"))
+
+govt %>% saveRDS("data/govt.RDS")
+```
+
+```{r}
+# S&P 500 Low Volatility Index Total Return (^SPXLOVTR)
+# spxlovtr <- read_csv("data/spxlovtr_level_data.csv") %>% 
+#   transmute(date = Period, adjusted = Close) %>% 
+#   arrange(date)
+
+# spxlovtr <- read_excel("data/spxlovtr_PerformanceGraphExport.xls", skip = 6) %>% 
+#   transmute(date = as.Date(.[[1]]), adjusted = .[[2]]) %>% 
+#   arrange(date)
+
+spxlovtr <- read_excel("data/SP5LVIT Index.xlsx", skip = 6) %>% 
+  transmute(date = as.Date(.[[1]]), adjusted = .[[2]]) %>%
+  arrange(date)
+  
+# S&P 500 Low Volatility Index (^SPXLOV)
+spxlov <- read_csv("data/spxlov_level_data.csv") %>% 
+  transmute(date = Period, adjusted = Close) %>% 
+  arrange(date)
+
+# CBOE S&P 500 Buy Write Index (^BXM)
+bxm <- readRDS("data/bxm.RDS") %>% 
+  arrange(date)
+
+# Russell 2000
+rut <- readRDS("data/rut.RDS") %>% 
+  arrange(date)
+
+# Russell 2000 TR (^RUTTR)
+# hist data not on Yahoo Finance, therefore YCharts
+ruttr <- read_csv("data/ruttr_level_data.csv") %>% 
+  transmute(date = Period, adjusted = Close) %>% 
+  arrange(date)
+
+# Morgan Stanley Cyclical Index (discontinued)
+cyc <- readRDS("data/cyc.RDS") %>% 
+  filter(!is.na(adjusted)) %>% 
+  arrange(date)
+
+# Russell 2000 Growth TR 
+ruotr <- read_csv("data/ruotr_level_data.csv") %>% 
+  transmute(date = Period, adjusted = Close) %>% 
+  arrange(date)
+
+ruotrcyc <- bind_rows(cyc %>% calc_ret() %>% filter(date <= as.Date("1993-05-31")),
+                      ruotr %>% calc_ret() %>% filter(date > as.Date("1993-05-31"))) %>% 
+  filter(!is.na(r)) %>% 
+  mutate(adjusted = cumprod(1+r)*cyc[[1,"adjusted"]])
+
+# S&P 500 High Beta Index (^SPXHB)
+spxhb <- read_csv("data/spxhb_level_data.csv") %>%
+  transmute(date = Period, adjusted = Close) %>%
+  arrange(date)
+
+spxhbtr <- read_excel("data/SP5HBIT Index.xlsx", skip = 4, sheet = "Sheet2") %>% 
+  transmute(date = as.Date(.[[1]]), adjusted = .[[2]]) %>%
+  arrange(date)
+
+ief <- readRDS("data/ief.RDS")
+iei <- readRDS("data/iei.RDS")
+spy <- readRDS("data/spy.RDS")
+iwm <- readRDS("data/iwm.RDS")
+govt <- readRDS("data/govt.RDS")
+
+nasdaq <- readRDS("data/nasdaq.RDS")
+
+# ^NACTR is TR of the NASDAQ Composite, however it's only available since end of 2012 
+nactr <- read_csv("data/nactr_level_data.csv") %>% 
+  transmute(date = Period, adjusted = Close) %>% 
+  arrange(date)
+
+nasdaqtr <- bind_rows(nasdaq %>% calc_ret() %>% filter(date <= as.Date("2012-12-04")),
+                      nactr %>% calc_ret() %>% filter(date > as.Date("2012-12-04"))) %>% 
+  filter(!is.na(r)) %>% 
+  mutate(adjusted = cumprod(1+r)*nasdaq[[1,"adjusted"]])
+```
+
+```{r}
+building_permits <- readRDS("data/building_permits.RDS")
+recessions_from_to <- readRDS("data/recessions_from_to.RDS")
+
+lumber_wiki <- readRDS("data/lumber.RDS") %>%
+  select(date, adjusted = settle) %>%
+  arrange(date)
+
+lumber <- read_excel("~/Downloads/xau MG data.xlsx", range = "B1:C8767") %>%
+  transmute(date = as.Date(.[[1]]), adjusted = .[[2]]) %>%
+  arrange(date)
+# lumber <- lumber_wiki
+
+# # makes no sense to have more or longer gold data than lumber
+# gold <- gold %>% filter(date >= min(lumber$date))
+
+copper <- readRDS("data/copper.RDS") %>% 
+  select(date, adjusted = settle) %>% 
+  arrange(date)
+
+vxo <- readRDS("data/vxo.RDS") %>% 
+  transmute(date, adjusted = price) %>% 
+  arrange(date)
+
+BofA_7_10yrs_corporate <- readRDS("data/BofA_7_10yrs_corporate.RDS") %>% 
+  arrange(date)
+
+spx <- readRDS("data/spx.RDS") %>% 
+  arrange(date)
+spxtr <- readRDS("data/spxtr.RDS") %>% 
+  arrange(date)
+
+spxtr <- bind_rows(spx %>% calc_ret() %>% filter(date <= min(spxtr$date)),
+                   spxtr %>% calc_ret() %>% filter(!is.na(r))) %>% 
+  filter(!is.na(r)) %>% 
+  arrange(date) %>% 
+  mutate(adjusted = cumprod(1+r)*spxtr[[1,"adjusted"]])
+```
+
+Finally, load the treasury bond returns we got from CRSP.
+
+```{r}
+crsp_bonds <- read_excel("data/Copy of tfz_dly_ft_tg_gayed.xlsx") %>% 
+  transmute(series = `Bond Name`, date = as.Date(`Calendar Date`), r_adj = `Daily Series of Return Adjusted`/100) %>% 
+  filter(!is.na(r_adj)) %>% 
+  group_by(series) %>% 
+  arrange(series, date) %>% 
+  mutate(adjusted = cumprod(1+r_adj)*100) %>% 
+  ungroup()
+
+crsp_treasury5 <- crsp_bonds %>% 
+  select(-r_adj) %>% 
+  filter(series == "5 Year Bonds") %>% 
+  arrange(date)
+
+crsp_treasury10 <- crsp_bonds %>% 
+  select(-r_adj) %>% 
+  filter(series == "10 Year Bonds") %>% 
+  arrange(date)
+
+crsp_treasury30 <- crsp_bonds %>% 
+  select(-r_adj) %>% 
+  filter(series == "30 Year Bonds") %>% 
+  arrange(date)
+
+```
+
+```{r}
+aggregate_bond <- read_excel("data/LBUSTRUU.xlsx", skip = 4) %>% 
+  select(1:2) %>% 
+  transmute(date = as.Date(.[[1]]), adjusted = .[[2]])
+```
+
+```{r}
+msci_cyclical <- read_excel("data/Copy of MSCI USA Cyclical Sectors-Gross USD.xlsx", skip = 9, sheet = "Index Levels") %>% 
+  transmute(date = as.Date(DATE), adjusted = GROSS)
+```
+
+# Lumber as a Cyclical Leading Indicator
+
+```{r}
+building_permits %>% 
+  ggplot() +
+  geom_rect(data = recessions_from_to, 
+            aes(xmin = from, xmax = to, ymin = -Inf, ymax = Inf, fill = "Recession")) +
+  geom_line(aes(x = date, y = price, color = "Permits (monthly)"), size = 1) +
+  scale_x_date(date_breaks = "2 years", date_labels = "%Y",
+               expand = c(0,0)) +
+  scale_color_manual(values = "#5b9bd5") +
+  scale_fill_manual(values = "#bfbfbf") +
+  labs(x = "", y = "", color = "", fill = "",
+       title = paste0("Chart 1: US Building Permits (", format(min(building_permits$date), "%Y"), " - ", format(max(building_permits$date), "%Y"), ")")) +
+  theme_classic() +
+  theme(legend.position = "top", 
+        plot.title = element_text(hjust = 0.5),
+        axis.text.x = element_text(angle = 90, vjust = 0.5))
+```
+
+
+# Gold as a Non-Cyclical and Uncorrelated Commodity
+
+```{r}
+r_gold_agg <- gold %>% 
+  transmute(date, r_gold = adjusted/lag(adjusted)-1) %>% 
+  full_join(aggregate_bond %>% transmute(date, r_agg = adjusted/lag(adjusted)-1), 
+            by = "date") %>% 
+  filter(date > min(gold$date),
+         !is.na(r_gold),
+         !is.na(r_agg)) %>% 
+  filter(date <= date_max)
+
+r_gold_agg_monthly <- r_gold_agg %>% 
+  group_by(month = floor_date(date, "months")) %>% 
+  summarise(r_gold = prod(1+r_gold)-1,
+            r_agg = prod(1+r_agg)-1)
+
+cor_gold_agg <- r_gold_agg_monthly %>% 
+  summarise(corr = cor(r_gold, r_agg)) %>% 
+  pull()
+```
+
+```{r}
+r_gold_spx <- gold %>% 
+  transmute(date, r_gold = adjusted/lag(adjusted)-1) %>% 
+  full_join(spx %>% transmute(date, r_spx = adjusted/lag(adjusted)-1), 
+            by = "date") %>% 
+  filter(date > min(gold$date),
+         !is.na(r_gold),
+         !is.na(r_spx)) %>% 
+  filter(date <= date_max)
+
+r_gold_spx_monthly <- r_gold_spx %>% 
+  filter(date >= as.Date("1976-01-01")) %>% 
+  group_by(month = floor_date(date, "months")) %>% 
+  summarise(r_gold = prod(1+r_gold)-1,
+            r_spx = prod(1+r_spx)-1)
+
+cor_gold_spx <- r_gold_spx_monthly %>% 
+  summarise(corr = cor(r_gold, r_spx)) %>% 
+  pull()
+```
+Since January 1976, Gold’s monthly correlation with the Barclays US Aggregate Bond Index is .05 `r number(cor_gold_agg, accuracy = 0.01)` while its correlation with the S&P 500 is `r number(cor_gold_spx, accuracy = 0.01)`.  Chart 2 illustrates the lack of any consistency in Gold’s correlation with U.S. equities.
+
+```{r}
+r_gold_spx <- gold_full %>% 
+  transmute(date, r_gold = adjusted/lag(adjusted)-1) %>% 
+  full_join(spx %>% transmute(date, r_spx = adjusted/lag(adjusted)-1), 
+            by = "date") %>% 
+  filter(#date > min(gold$date),
+         !is.na(r_gold),
+         !is.na(r_spx)) %>% 
+  filter(date <= date_max)
+
+r_gold_spx_monthly <- r_gold_spx %>% 
+  # filter(date >= as.Date("1976-01-01")) %>% 
+  group_by(date = floor_date(date, "months")) %>% 
+  summarise(r_gold = prod(1+r_gold)-1,
+            r_spx = prod(1+r_spx)-1)
+
+r_gold_spx_monthly %>% 
+  filter(date >= as.Date("1967-01-01")) %>% 
+  group_by(date = floor_date(date, "months")) %>% 
+  summarise(r_gold = prod(1+r_gold)-1,
+            r_spx = prod(1+r_spx)-1) %>% 
+  ungroup() %>% 
+  tq_mutate_xy(x = r_gold, y = r_spx, mutate_fun = runCor, n = 12, col_rename = "rolling_cor") %>% 
+  mutate(series = "Rolling 12-Month") %>% 
+  bind_rows(tibble(date = min(.$date), series = "Average", rolling_cor = mean(.$rolling_cor, na.rm = T)),
+            tibble(date = max(.$date), series = "Average", rolling_cor = mean(.$rolling_cor, na.rm = T))) %>% 
+  ggplot(aes(x = date, y = rolling_cor, color = series)) +
+  geom_line() +
+  scale_y_continuous(limits = c(-1, 1), breaks = seq(-1, 1, 0.2)) +
+  # scale_x_date(limits = c(as.Date("1986-01-01"), as.Date("2014-12-31"))) +
+  scale_color_manual(values = c("red", "#5b9bd5")) +
+  scale_x_date(date_breaks = "2 years", date_labels = "%Y",
+               expand = c(0,1)) +
+  labs(x = "", y = "", color = "", fill = "",
+       title = "Chart 2: Gold vs. S&P 500 Correlation") +
+  theme_classic() +
+  theme(legend.position = "top", 
+        plot.title = element_text(hjust = 0.5),
+        axis.text.x = element_text(angle = 90, vjust = 0.5))
+```
+
+# The Lumber-Gold Trading Rule
+
+Using **weekly data** available on Lumber and Gold going back to ~~November 1986~~ (Gold since `r min(gold$date)`, Lumber since `r min(lumber$date)`, Treasury 5-7 year Index since `r min(bb_5_7_yr_index$date)`), we developed the following trading rule:
+
+* If Lumber is outperforming Gold over the prior 13 weeks, take a more aggressive stance in the portfolio for the following week.
+* If Gold is outperforming Lumber over the prior 13 weeks, take a more defensive stance in the portfolio for the following week.
+* Re-evaluate weekly and make changes to the portfolio only when leadership between Lumber and Gold changes.
+
+# The Market Environment and the Volatility Signal
+
+```{r}
+spx_weekly_annualized_sd <- spx %>% 
+  transmute(date, r = adjusted/lag(adjusted)-1) %>% 
+  group_by(date = floor_date(date, "weeks")) %>% 
+  mutate(sd_annualized = sd(r)*sqrt(252),
+         week_date = min(date)) %>% 
+  filter(date >= as.Date("1979-01-01")) %>% 
+  filter(date <= date_max)
+
+signal_returns <- bind_rows(lumber %>% 
+                              filter(date >= min(gold$date)) %>% 
+                              transmute(date, r = adjusted/lag(adjusted)-1, series = "lumber"),
+                            gold %>% 
+                              filter(date >= min(lumber$date)) %>% 
+                              transmute(date, r = adjusted/lag(adjusted)-1, series = "gold"))
+
+annualized_vola_leading <- signal_returns %>% 
+  calc_signal() %>% 
+  # filter(date <= as.Date("2014-12-31")) %>%
+  filter(date >= as.Date("1986-01-01")) %>%
+  left_join(spx_weekly_annualized_sd, 
+            by = "date") %>% 
+  # mutate(`lumber > gold` = lag(`lumber > gold`)) %>%
+  filter(!is.na(`lumber > gold`),
+         !is.na(sd_annualized)) %>% 
+  group_by(`lumber > gold`) %>% 
+  summarise(mean_sd_annualized = mean(sd_annualized, na.rm = T), min_date = min(date), max_date = max(date)) %>% 
+  mutate(lumber_leading = ifelse(`lumber > gold`, "Lumber Leading", "Gold Leading"))
+
+annualized_vola_leading %>% 
+  select(-min_date, -max_date) %>% 
+  ggplot(aes(x = reorder(lumber_leading, desc(lumber_leading)), y = mean_sd_annualized, 
+             fill = factor(mean_sd_annualized))) +
+  geom_col(width = 0.3) +
+  geom_text(aes(label = percent(mean_sd_annualized)), vjust = -1) +
+  scale_y_continuous(limits = c(0, 0.25), labels = percent) +
+  scale_fill_manual(values = c("#5b9bd5", "#ff0000")) +
+  labs(x = "", y = "", color = "", fill = "",
+       title = paste0("Chart 3: S&P 500 Average Annual Volatility (", 
+       year(annualized_vola_leading$min_date), " - ",  year(annualized_vola_leading$max_date), ")")) +
+  theme_classic() +
+    theme(legend.position = "none", 
+        plot.title = element_text(hjust = 0.5),
+        axis.text.x = element_text(angle = 0, vjust = 0.5))
+```
+
+
+```{r}
+vxo_week_average <- vxo %>% 
+  group_by(date = floor_date(date, "weeks")) %>% 
+  summarise(average_vxo = mean(adjusted)) %>% 
+  ungroup() %>% 
+  filter(date <= date_max)
+
+annualized_vola_leading <- signal_returns %>% 
+  calc_signal() %>% 
+  # filter(date <= as.Date("2014-12-31")) %>%
+  filter(date >= as.Date("1986-01-01")) %>%
+  left_join(vxo_week_average, 
+            by = "date") %>% 
+  # mutate(`lumber > gold` = lag(`lumber > gold`)) %>%
+  filter(!is.na(`lumber > gold`),
+         !is.na(average_vxo)) %>% 
+  group_by(`lumber > gold`) %>% 
+  summarise(mean_sd_annualized = mean(average_vxo, na.rm = T), min_date = min(date), max_date = max(date)) %>% 
+  mutate(lumber_leading = ifelse(`lumber > gold`, "Lumber Leading", "Gold Leading"))
+
+annualized_vola_leading %>% 
+  select(-min_date, -max_date) %>% 
+  ggplot(aes(x = reorder(lumber_leading, desc(lumber_leading)), y = mean_sd_annualized, 
+             fill = factor(mean_sd_annualized))) +
+  geom_col(width = 0.3) +
+  geom_text(aes(label = number(mean_sd_annualized)), vjust = -1) +
+  scale_y_continuous(breaks = 17:23) +
+  coord_cartesian(ylim = c(17, 23)) +
+  scale_fill_manual(values = c("#5b9bd5", "#ff0000")) +
+  labs(x = "", y = "", color = "", fill = "",
+       title = paste0("Chart 4: VXO Index (Average Values) (", 
+       year(annualized_vola_leading$min_date), " - ",  year(annualized_vola_leading$max_date), ")")) +
+  theme_classic() +
+    theme(legend.position = "none", 
+        plot.title = element_text(hjust = 0.5),
+        axis.text.x = element_text(angle = 0, vjust = 0.5))
+```
+
+```{r}
+spx_weekly <- spx %>%
+  mutate(r = adjusted/lag(adjusted)-1) %>% 
+  group_by(date = floor_date(date, "weeks")) %>% 
+  summarise(r_spx = prod(1+r)-1) %>% 
+  # filter(date >= as.Date("1979-03-25")) %>% 
+  filter(date <= date_max) %>% 
+  ungroup()
+
+gold_leading_5quantile_spx <- signal_returns %>% 
+  calc_signal() %>% 
+  filter(!is.na(gold), !is.na(lumber)) %>% 
+  filter(date >= date_min, 
+         date <= date_max) %>% 
+  left_join(spx_weekly, by = "date") %>% 
+  filter(r_spx < quantile(r_spx, 0.05)) %>% 
+  group_by(`lumber > gold`) %>% 
+  count() %>% 
+  ungroup() %>% 
+  mutate(percent = n/sum(n)) %>% 
+  filter(!`lumber > gold`) %>% 
+  pull(percent)
+  
+gold_leading_1quantile_spx <- signal_returns %>% 
+  calc_signal() %>% 
+  filter(!is.na(gold), !is.na(lumber)) %>% 
+  filter(date >= date_min, 
+         date <= date_max) %>% 
+  left_join(spx_weekly, by = "date") %>% 
+  filter(r_spx < quantile(r_spx, 0.01)) %>% 
+  group_by(`lumber > gold`) %>% 
+  count() %>% 
+  ungroup() %>% 
+  mutate(percent = n/sum(n)) %>% 
+  filter(!`lumber > gold`) %>% 
+  pull(percent)
+
+gold_leading_overall <- signal_returns %>% 
+  calc_signal() %>% 
+  filter(!is.na(gold), !is.na(lumber)) %>% 
+  filter(date >= date_min, 
+         date <= date_max) %>% 
+  left_join(spx_weekly, by = "date") %>% 
+  # filter(r_spx < quantile(r_spx, 0.01)) %>% 
+  group_by(`lumber > gold`) %>% 
+  count() %>% 
+  ungroup() %>% 
+  mutate(percent = n/sum(n)) %>% 
+  filter(!`lumber > gold`) %>% 
+  pull(percent)
+```
+
+Finally, we looked at the largest weekly percentage declines for the S&P 500 during the sample period. We found that in the worst 5% of weeks, Gold was outperforming in advance `r percent(gold_leading_5quantile_spx, accuracy = 0.1)` of the time and in the worst 1% of weeks Gold was outperforming in advance `r percent(gold_leading_1quantile_spx, accuracy = 0.1)` of the time. This is significantly higher than the percentage of time Gold was outperforming overall at `r percent(gold_leading_overall, accuracy = 0.1)`. 
+
+
+# Defense vs. Offense: Developing Objective Criteria
+
+```{r}
+# freq <- "monthly"
+freq <- "daily"
+
+ret_data <- bind_rows(#bb_5_7_yr_index %>% 
+                      #  transmute(date, r = adjusted/lag(adjusted)-1, name = "Bloomberg Barclays U.S. Treasury: 5-7 Year Index"),
+                      crsp_treasury5 %>%
+                        transmute(date, r = adjusted/lag(adjusted)-1, name = "CRSP Treasury 5 Year Total Return Index"),
+                      bxm %>% 
+                        transmute(date, r = adjusted/lag(adjusted)-1, name = "CBOE S&P 500 Buy Write Index"),
+                      spxlovtr %>% 
+                        transmute(date, r = adjusted/lag(adjusted)-1, name = "S&P 500 Low Volatility Index"),
+                      spxtr %>% 
+                        transmute(date, r = adjusted/lag(adjusted)-1, name = "S&P 500 Index"),
+                      ruttr %>% 
+                        transmute(date, r = adjusted/lag(adjusted)-1, name = "Russell 2000 Index"),
+                      cyc %>% 
+                        transmute(date, r = adjusted/lag(adjusted)-1, name = "Morgan Stanley Cyclicals Index (discontinued 2015)"),
+                      ruotr %>% 
+                        transmute(date, r = adjusted/lag(adjusted)-1, name = "Russell 2000 Growth Total Return Index"),
+                      spxhbtr %>% 
+                        transmute(date, r = adjusted/lag(adjusted)-1, name = "S&P 500 High Beta Index")) %>% 
+  left_join(spx %>% 
+              transmute(date, r_ind = adjusted/lag(adjusted)-1),
+            by = "date") %>% 
+  filter(!is.na(r), 
+         !is.na(r_ind)) %>% 
+  filter(date <= date_max,
+         date >= date_min)
+
+if (freq == "monthly") {
+  ret_data <- ret_data %>% 
+    mutate(date = floor_date(date, "months")) %>% 
+    group_by(name, date) %>% 
+    summarise(r = prod(1+r)-1, r_ind = prod(1+r_ind)-1) %>% 
+    ungroup()
+  
+  scale <- 12
+} else {
+  scale <- 252
+}
+  
+beta_full <- ret_data %>% 
+  group_by(name) %>% 
+  do(model = lm(r ~ r_ind, data = .)) %>% 
+  mutate(`Beta to the S&P 500` = coef(model)[2]) %>% 
+  select(-model) %>% 
+  ungroup()
+  
+vola_full <- ret_data %>% 
+  group_by(name) %>% 
+  tq_performance(Ra = r, Rb = r_ind, performance_fun = table.AnnualizedReturns, scale = scale) %>% 
+  select(name, `Annualized Volatility` = AnnualizedStdDev) %>% 
+  ungroup()
+
+min_date <- max(min(bb_5_7_yr_index$date), min(bxm$date), min(spxlov$date), min(spx$date), min(rut$date), min(cyc$date), min(spxhb$date))
+
+# beta_since11 <- ret_data %>% 
+#   filter(date >= min_date) %>% 
+#   group_by(name) %>% 
+#   # tq_performance(Ra = r, Rb = r_ind, performance_fun = table.CAPM, scale = scale)
+#   do(model = lm(r ~ r_ind, data = .)) %>% 
+#   mutate(`Beta (since 4/2011)` = coef(model)[2]) %>% 
+#   select(-model) %>% 
+#   ungroup()
+  
+# vola_since11 <- ret_data %>% 
+#   filter(date >= min_date) %>% 
+#   group_by(name) %>% 
+#   tq_performance(Ra = r, Rb = r_ind, performance_fun = table.AnnualizedReturns, scale = scale) %>% 
+#   select(name, `A. Vol. (since 4/2011)` = AnnualizedStdDev) %>% 
+#   ungroup()
+
+
+table1 <- bind_cols(vola_full %>% arrange(name), 
+                    beta_full %>% arrange(name) %>% select(-name)
+                    #vola_since11 %>% arrange(name) %>% select(-name),
+                    #beta_since11 %>% arrange(name) %>% select(-name)
+                    ) %>% 
+  arrange(name != "Bloomberg Barclays U.S. Treasury: 5-7 Year Index",
+          name != "CRSP Treasury 5 Year Total Return Index",
+          name != "CBOE S&P 500 Buy Write Index",
+          name != "S&P 500 Low Volatility Index",
+          name != "S&P 500 Index",
+          name != "Russell 2000 Index",
+          name != "Morgan Stanley Cyclicals Index (discontinued 2015)",
+          name != "Russell 2000 Growth Total Return Index",
+          name != "S&P 500 High Beta Index") %>% 
+  mutate_at(vars(starts_with("A")), percent, accuracy = 0.01) %>% 
+  mutate_at(vars(starts_with("Beta")), number, accuracy = 0.01) %>% 
+  rename(`Asset Class` = 1)
+
+# table1 %>%
+#   write_clip()
+
+table1 %>% 
+  as_dt(caption = "Table 1: Asset Class Volatility and Beta")
+```
+
+# Playing Defense When Gold is Outperforming Lumber
+
+```{r}
+cor_crsp5_spx <- left_join(crsp_treasury5 %>% 
+                             transmute(date, r_crsp5 = adjusted/lag(adjusted)-1),
+                           spx %>% 
+                             transmute(date, r_spx = adjusted/lag(adjusted)-1),
+                           by = "date") %>% 
+  filter(!is.na(r_crsp5), !is.na(r_spx)) %>% 
+  filter(date >= date_min_nov,
+         date <= date_max) %>% 
+  group_by(date = floor_date(date, "weeks")) %>% 
+  summarise(r_crsp5 = prod(1+r_crsp5, na.rm = T)-1,
+            r_spx = prod(1+r_spx, na.rm = T)-1) %>% 
+  ungroup() %>% 
+  filter(date >= as.Date("1986-11-01"), date <= date_max) %>% 
+  summarise(cor = cor(r_crsp5, r_spx)) %>% 
+  pull()
+
+cor_crsp5_spx_down <- left_join(crsp_treasury5 %>% 
+                                  transmute(date, r_crsp5 = adjusted/lag(adjusted)-1),
+                                spx %>% 
+                                  transmute(date, r_spx = adjusted/lag(adjusted)-1),
+                                by = "date") %>% 
+  filter(!is.na(r_crsp5), !is.na(r_spx)) %>% 
+  filter(date >= date_min_nov,
+         date <= date_max) %>% 
+  filter(r_spx < 0) %>% 
+  group_by(date = floor_date(date, "weeks")) %>% 
+  summarise(r_crsp5 = prod(1+r_crsp5, na.rm = T)-1,
+            r_spx = prod(1+r_spx, na.rm = T)-1) %>% 
+  ungroup() %>% 
+  filter(date >= as.Date("1986-11-01"), date <= date_max) %>% 
+  summarise(cor = cor(r_crsp5, r_spx)) %>% 
+  pull()
+```
+
+Since November 1986, the weekly correlation between the S&P 500 Index and the CRSP Treasury 5 Year Total Return Index is `r number(cor_crsp5_spx, accuracy = 0.01)`. During weeks in which the S&P 500 returns are negative, this correlation moves down to `r number(cor_crsp5_spx_down, accuracy = 0.01)`.
+
+```{r}
+# * If Lumber is outperforming Gold over the prior 13 weeks, take a more aggressive stance in the portfolio for the following week.
+# * If Gold is outperforming Lumber over the prior 13 weeks, take a more defensive stance in the portfolio for the following week.
+# * Re-evaluate weekly and make changes to the portfolio only when leadership between Lumber and Gold changes.
+
+signal_returns <- bind_rows(lumber %>% 
+                              filter(date >= min(gold$date)) %>% 
+                              transmute(date, r = adjusted/lag(adjusted)-1, series = "lumber"),
+                            gold %>% 
+                              filter(date >= min(lumber$date)) %>% 
+                              transmute(date, r = adjusted/lag(adjusted)-1, series = "gold"))
+  # filter(date <= date_max,
+  #        date >= date_min)
+```
+
+```{r}
+plot_strategy_performance <- function(data, col.strategy = "r.strategy", col.others = c("r.treasury", "r.spxtr"),
+                                      initial_investment = 10000, title = "Chart 5: Growth of $10,000", title_add_period = T,
+                                      name.strategy = "LG Bond Strategy", 
+                                      name.others = c("CRSP Treasury 5 Year Total Return Index", "S&P 500 (TR)")) {
+  lookup_names <- c(name.strategy, name.others)
+  names(lookup_names) <- c(col.strategy, col.others)
+  
+  performance <- data %>% 
+    select(date, col.strategy, col.others) %>% 
+    pivot_longer(cols = -date, names_to = "series", values_to = "r") %>% 
+    arrange(series, date) %>% 
+    group_by(series) %>% 
+    mutate(p = cumprod(r+1)*initial_investment) %>% 
+    mutate(p = ifelse(row_number() == 1, initial_investment, p)) %>%
+    filter(!is.na(p)) %>% 
+    ungroup()
+  
+  if (title_add_period) {
+    title <- paste0(title, " (", format(min(performance$date), "%b %Y"), " - ", format(max(performance$date), "%b %Y"),")")
+  }
+  
+  plot <- performance %>% 
+    mutate(name = recode(series, !!!lookup_names),
+           name = factor(name, levels = lookup_names)) %>% 
+    ggplot(aes(x = date, y = p, color = reorder(name, desc(name)))) +
+    geom_line() +
+    geom_text_repel(aes(label = if_else(date == max(date), number(p, accuracy = 1, big.mark = ",", prefix = "$"), NA_character_)), 
+                    color = "black", size = 3) +
+    scale_y_log10(labels = number_format(big.mark = ",")) +
+    scale_x_date(date_breaks = "1 year", date_labels = "%Y", expand = c(0,0)) +
+    scale_color_manual(values = c("#ff0000", "black", "#5b9bd5", "green")) +
+    labs(x = "", y = "", color = "", fill = "",
+         title = title) +
+    theme_classic() +
+    theme(legend.position = "top", 
+          plot.title = element_text(hjust = 0.5),
+          axis.text.x = element_text(angle = 90, vjust = 0.5))
+  
+  return(plot)
+}
+```
+
+```{r}
+plot_strategy_drawdowns <- function(data, col.strategy = "r.strategy", col.others = c("r.spxtr"),
+                                    title = "Chart 6: Drawdown", title_add_period = T,
+                                    name.strategy = "LG Bond Strategy", name.others = c("S&P 500 (TR)")) {
+  lookup_names <- c(name.strategy, name.others)
+  names(lookup_names) <- c(col.strategy, col.others)
+  
+  drawdown <- data %>% 
+    select(date, col.strategy, col.others) %>% 
+    pivot_longer(cols = -date, names_to = "series", values_to = "r") %>% 
+    arrange(series, date) %>% 
+    group_by(series) %>% 
+    mutate(d = calc_drawdown(r))
+  
+  if (title_add_period) {
+    title <- paste0(title, " (", format(min(drawdown$date), "%b %Y"), " - ", format(max(drawdown$date), "%b %Y"),")")
+  }
+  
+  plot <- drawdown %>% 
+    mutate(name = recode(series, !!!lookup_names)) %>% 
+    ggplot(aes(x = date, y = d, color = reorder(name, desc(name)))) +
+    geom_line() +
+    # geom_text_repel(aes(label = if_else(date == max(date), number(p, accuracy = 1, big.mark = ",", prefix = "$"), NA_character_)), 
+    #                 color = "black", size = 3) +
+    scale_y_continuous(labels = percent, breaks = seq(-1, 0, by = 0.1)) +
+    scale_x_date(date_breaks = "1 year", date_labels = "%Y", expand = c(0,0)) +
+    scale_color_manual(values = c("#ff0000", "#5b9bd5")) +
+    labs(x = "", y = "", color = "", fill = "",
+         title = title) +
+    theme_classic() +
+    theme(legend.position = "top", 
+          plot.title = element_text(hjust = 0.5),
+          axis.text.x = element_text(angle = 90, vjust = 0.5))
+  
+  return(plot)
+}
+```
+
+```{r}
+table_strategy_performance <- function(data, col.strategy = "r.strategy", col.others = "r.spxtr",
+                                       title = "Table 2: LG Bond Strategy vs. S&P 500", title_add_period = T,
+                                       name.strategy = "LG Bond Strategy", name.others = "S&P 500 (TR)",
+                                       col.market = "r.spxtr", col.rf = "r.rf", 
+                                       col.signal = "lumber > gold",
+                                       output = "datatable") {
+  
+  market <- data[, col.market]
+  riskfree <- data[, col.rf]
+  
+  if (title_add_period) {
+    title <- paste0(title, " (", format(min(data$date), "%b %Y"), " - ", format(max(data$date), "%b %Y"),")")
+  }
+  
+  retprod <- function(x) {
+    return(prod(1+x)-1)
+  }
+  
+  annret <- function(x) {
+    return(prod(1+x)^(52/length(x))-1)
+  }
+  
+  annvol <- function(x) {
+    return(sd(x, na.rm = TRUE)*sqrt(52))
+  }
+  
+  sharpr_ <- function(x){
+    return(annret(x)/annvol(x))
+  }
+  
+  sharpr <- function(x){
+    return(annret(x-unlist(riskfree, use.names = F))/annvol(x))
+  }
+  
+  sortir <- function(x){
+    return(SortinoRatio(x)[[1]])
+  }
+  
+  maxdra <- function(x){
+    return(min(Drawdowns(x)))
+  }
+  
+  mtbeta <- function(x){
+    reg <- lm(unlist(x, use.names = F) ~ unlist(market, use.names = F))
+    
+    return(coef(reg)[[2]])
+  }
+  
+  annalp <- function(x){
+    reg <- lm(unlist(x, use.names = F) ~ unlist(market, use.names = F))
+    
+    return((1+coef(reg)[[1]])^52-1)
+  }
+  
+  cumulative_return <- tibble(name = "Cumulative Return", 
+                              data %>% 
+                                select(date, col.strategy, col.others) %>% 
+                                summarise_if(is.numeric, retprod)) %>% 
+    mutate(Differential = !!as.name(col.strategy) - !!as.name(col.others)) %>% 
+    mutate_if(is.numeric, percent, big.mark = ",", accuracy = 1)
+  
+  annual_return <- tibble(name = "Annual Return",
+                          data %>% 
+                            select(date, col.strategy, col.others) %>% 
+                            summarise_if(is.numeric, annret)) %>% 
+    mutate(Differential = !!as.name(col.strategy) - !!as.name(col.others)) %>% 
+    mutate_if(is.numeric, percent, big.mark = ",", accuracy = 0.1)
+  
+  annual_vola <- tibble(name = "Annual Volatility",
+                        data %>% 
+                          select(date, col.strategy, col.others) %>% 
+                          summarise_if(is.numeric, annvol)) %>% 
+    mutate(Differential = !!as.name(col.strategy) - !!as.name(col.others)) %>% 
+    mutate_if(is.numeric, percent, big.mark = ",", accuracy = 0.1)
+  
+  sharpe_ratio <- tibble(name = "Sharpe Ratio",
+                         data %>% 
+                          select(date, col.strategy, col.others) %>% 
+                          summarise_if(is.numeric, sharpr)) %>% 
+    mutate(Differential = !!as.name(col.strategy) - !!as.name(col.others)) %>% 
+    mutate_if(is.numeric, number, big.mark = ",", accuracy = 0.01)
+  
+  sortino_ratio <- tibble(name = "Sortino Ratio",
+                          data %>% 
+                          select(date, col.strategy, col.others) %>% 
+                          summarise_if(is.numeric, sortir)) %>% 
+    mutate(Differential = !!as.name(col.strategy) - !!as.name(col.others)) %>% 
+    mutate_if(is.numeric, number, big.mark = ",", accuracy = 0.01)
+  
+  max_drawdown <- tibble(name = "Max Drawdown",
+                         data %>% 
+                         select(date, col.strategy, col.others) %>% 
+                         summarise_if(is.numeric, maxdra)) %>% 
+    mutate(Differential = !!as.name(col.strategy) - !!as.name(col.others)) %>% 
+    mutate_if(is.numeric, percent, big.mark = ",", accuracy = 0.01)
+  
+  beta <- tibble(name = "Beta",
+                 data %>% 
+                          select(date, col.strategy, col.others) %>% 
+                          summarise_if(is.numeric, mtbeta)) %>% 
+    mutate(Differential = !!as.name(col.strategy) - !!as.name(col.others)) %>% 
+    mutate_if(is.numeric, number, big.mark = ",", accuracy = 0.01)
+  
+  annual_alpha <- tibble(name = "Annual Alpha",
+                         data %>% 
+                           select(date, col.strategy, col.others) %>% 
+                           summarise_if(is.numeric, annalp)) %>% 
+    mutate(Differential = !!as.name(col.strategy) - !!as.name(col.others)) %>% 
+    mutate_if(is.numeric, percent, big.mark = ",", accuracy = 0.1)
+  
+  annual_rotations <- tibble(name = "Rotations/Year",
+                             data %>% 
+                               select(date, col.signal) %>% 
+                               mutate(rotation = !!as.name(col.signal) != lag(!!as.name(col.signal))) %>% 
+                               summarise(rotations = sum(rotation, na.rm = T)/(length(rotation)/52)) %>% 
+                               rename(!!as.name(col.strategy) := rotations)) %>% 
+    mutate(!!as.name(col.others) := 0,
+           Differential = !!as.name(col.strategy) - !!as.name(col.others)) %>% 
+    mutate_if(is.numeric, number, big.mark = ",", accuracy = 0.1)
+  
+  out <- bind_rows(cumulative_return,
+                   annual_return,
+                   annual_vola,
+                   sharpe_ratio,
+                   sortino_ratio,
+                   max_drawdown,
+                   beta,
+                   annual_alpha,
+                   annual_rotations) %>% 
+    rename(` ` = name, 
+           !!as.name(name.strategy) := col.strategy,
+           !!as.name(name.others) := col.others)
+  
+  
+  if (output == "datatable") {
+    return(as_dt(out, caption = title))
+  } else if (output == "clip") {
+    out %>% write_clip()
+  } else {
+    return(out)
+  }
+}
+```
+
+```{r}
+table_strategy_drawdowns <- function(data, col.strategy = "r.strategy", col.others = "r.spxtr",
+                                     title = "Table 3: Largest S&P 500 Drawdowns", title_add_period = T,
+                                     name.strategy = "LG Bond Strategy", name.others = "S&P 500 (TR)",
+                                     col.market = "r.spxtr", col.signal = "lumber > gold",
+                                     date.format = "%m/%d/%Y",
+                                     output = "datatable", top_n = 8) {
+  
+  if (title_add_period) {
+    title <- paste0(title, " (", format(min(data$date), "%b %Y"), " - ", format(max(data$date), "%b %Y"),")")
+  }
+  
+  dd <- data %>% 
+    select(date, r = col.others) %>% 
+    tibble_to_xts() %>% 
+    table.Drawdowns(top = top_n) %>% 
+    as_tibble() %>% 
+    select(From, Trough, Depth)
+  
+  dd_strategy <- c()
+
+  for (i in 1:nrow(dd)) {
+    d <- data %>%
+      filter(date >= dd[[i, "From"]],
+             date <= dd[[i, "Trough"]]) %>% 
+      select(date, r = col.strategy) %>% 
+      mutate(d = calc_drawdown(r)) %>% 
+      summarise(max_d = min(d)) %>% 
+      pull(max_d)
+    
+    dd_strategy <- c(dd_strategy, d)
+  }
+  
+  out <- dd %>% 
+    transmute(`Start Date` = From, 
+              `End Date` = Trough, 
+              !!as.name(paste0(name.strategy, " Max Drawdown")) := dd_strategy,
+              !!as.name(paste0(name.others, " Max Drawdown")) := Depth) %>% 
+    mutate(Differential = .[[3]] - .[[4]]) %>% 
+    arrange(`Start Date`) %>% 
+    mutate(`Start Date` = format(`Start Date`, date.format), 
+           `End Date` = format(`End Date`, date.format)) %>% 
+    mutate_if(is.numeric, percent, accuracy = 0.1)
+
+  if (output == "datatable") {
+    return(as_dt(out, caption = title))
+  } else if (output == "clip") {
+    out %>% write_clip()
+  } else {
+    return(out)
+  }
+}
+```
+
+## 1) The Lumber-Gold ("LG") Bond Strategy
+
+```{r}
+strategy <- signal_returns %>% 
+  calc_signal() %>% 
+  left_join(crsp_treasury5 %>% calc_ret() %>% change_ret_freq(),
+            by = "date") %>% 
+  left_join(spxtr %>% calc_ret() %>% change_ret_freq(),
+            by = "date", suffix = c(".treasury", ".spxtr")) %>%
+  filter_if(is.numeric, all_vars(!is.na(.))) %>% 
+  mutate(r.strategy = case_when(`lumber > gold` ~ r.spxtr,
+                                T ~ r.treasury)) %>% 
+  filter(date <= date_max,
+         # date <= as.Date("2015-01-01"),
+         date >= date_min_nov
+         # date >= as.Date("1988-01-01")
+         ) %>% 
+  left_join(rf %>% change_ret_freq() %>% rename(r.rf = r))
+
+strategy %>% 
+  select(date, r.strategy) %>% 
+  tibble_to_xts() %>% 
+  table.Drawdowns()
+
+plot_strategy_performance(strategy)
+
+# table_strategy_performance(strategy, output = "clip")
+table_strategy_performance(strategy)
+
+
+plot_strategy_drawdowns(strategy)
+
+# table_strategy_drawdowns(strategy, output = "clip")
+drawdowns <- bind_rows(table_strategy_drawdowns(strategy, top_n = 6, output = "raw"),
+                       table_strategy_drawdowns(strategy %>% filter(date > as.Date("2011-04-01"), date < as.Date("2011-11-01")), 
+                                                top_n = 1, output = "raw")) %>% 
+  mutate(s = mdy(`Start Date`)) %>% 
+  arrange(s) %>% 
+  select(-s)
+
+drawdowns %>% 
+  as_dt(caption = "Table 3: Largest S&P 500 Drawdowns (Nov 1986 - Nov 2020)")
+
+# write_clip(drawdowns)
+```
+
+## 2) The Lumber-Gold ("LG") Buy-Write Strategy
+
+```{r}
+cor_bxm_spx <- left_join(bxm %>% 
+                           transmute(date, r_bxm = adjusted/lag(adjusted)-1),
+                         spx %>% 
+                           transmute(date, r_spx = adjusted/lag(adjusted)-1),
+                         by = "date") %>% 
+  filter(!is.na(r_bxm), !is.na(r_spx)) %>% 
+  summarise(cor = cor(r_bxm, r_spx)) %>% 
+  pull()
+```
+
+```{r}
+strategy <- signal_returns %>% 
+  calc_signal() %>% 
+  left_join(bxm %>% calc_ret() %>% change_ret_freq(),
+            by = "date") %>% 
+  left_join(spxtr %>% calc_ret() %>% change_ret_freq(),
+            by = "date", suffix = c(".bxm", ".spxtr")) %>%
+  filter_if(is.numeric, all_vars(!is.na(.))) %>% 
+  mutate(r.strategy = case_when(`lumber > gold` ~ r.spxtr,
+                                T ~ r.bxm)) %>% 
+  filter(date <= date_max) %>% 
+  left_join(rf %>% change_ret_freq() %>% rename(r.rf = r))
+
+
+plot_strategy_performance(strategy, col.strategy = "r.strategy", col.others = c("r.bxm", "r.spxtr"),
+                          initial_investment = 10000, title = "Chart : Growth of $10,000", title_add_period = T,
+                          name.strategy = "LG BuyWrite Strategy", name.others = c("CBOE S&P 500 Buy-Write Index", "S&P 500 (TR)"))
+
+table_strategy_performance(strategy, col.strategy = "r.strategy", col.others = "r.spxtr",
+                           title = "Table 4: LG BuyWrite Strategy vs. S&P 500", title_add_period = T,
+                           name.strategy = "LG BuyWrite Strategy", name.others = "S&P 500 (TR)",
+                           col.market = "r.spxtr", col.signal = "lumber > gold",
+                           output = "datatable")
+
+# table_strategy_performance(strategy, col.strategy = "r.strategy", col.others = "r.spxtr",
+#                            title = "Table 4: LG BuyWrite Strategy vs. S&P 500", title_add_period = T,
+#                            name.strategy = "LG BuyWrite Strategy", name.others = "S&P 500 (TR)",
+#                            col.market = "r.spxtr", col.signal = "lumber > gold",
+#                            output = "clip")
+```
+
+## 3) The Lumber-Gold ("LG") Low Volatility Strategy
+
+```{r}
+strategy <- signal_returns %>% 
+  calc_signal() %>% 
+  left_join(spxlovtr %>% calc_ret() %>% change_ret_freq(),
+            by = "date") %>% 
+  left_join(spxtr %>% calc_ret() %>% change_ret_freq(),
+            by = "date", suffix = c(".spxlovtr", ".spxtr")) %>%
+  filter_if(is.numeric, all_vars(!is.na(.))) %>% 
+  mutate(r.strategy = case_when(`lumber > gold` ~ r.spxtr,
+                                T ~ r.spxlovtr)) %>% 
+    filter(date <= date_max,
+           date >= date_min_nov) %>% 
+  left_join(rf %>% change_ret_freq() %>% rename(r.rf = r))
+
+
+plot_strategy_performance(strategy, col.strategy = "r.strategy", col.others = c("r.spxlovtr", "r.spxtr"),
+                          initial_investment = 10000, title = "Chart : Growth of $10,000", title_add_period = T,
+                          name.strategy = "LG Low Vol Strategy", name.others = c("S&P 500 Low Volatility Index (TR)", "S&P 500 (TR)"))
+
+table_strategy_performance(strategy, col.strategy = "r.strategy", col.others = "r.spxtr",
+                           title = "Table 5: LG Low Vol Strategy vs. S&P 500", title_add_period = T,
+                           name.strategy = "LG Low Vol Strategy", name.others = "S&P 500 (TR)",
+                           col.market = "r.spxtr", col.signal = "lumber > gold",
+                           output = "datatable")
+
+# table_strategy_performance(strategy, col.strategy = "r.strategy", col.others = "r.spxtr",
+#                            title = "Table 5: LG Low Vol Strategy vs. S&P 500", title_add_period = T,
+#                            name.strategy = "LG Low Vol Strategy", name.others = "S&P 500 (TR)",
+#                            col.market = "r.spxtr", col.signal = "lumber > gold",
+#                            output = "clip")
+```
+
+
+# Playing Offense When Lumber is Outperforming Gold
+
+## 1) The Lumber-Gold ("LG") Small Cap Strategy
+
+```{r}
+strategy <- signal_returns %>% 
+  calc_signal() %>% 
+  left_join(ruttr %>% calc_ret() %>% change_ret_freq(),
+            by = "date") %>% 
+  left_join(spxtr %>% calc_ret() %>% change_ret_freq(),
+            by = "date", suffix = c(".ruttr", ".spxtr")) %>%
+  filter_if(is.numeric, all_vars(!is.na(.))) %>% 
+  mutate(r.strategy = case_when(`lumber > gold` ~ r.ruttr,
+                                T ~ r.spxtr)) %>% 
+  filter(date <= date_max,
+         date >= date_min_nov) %>% 
+  left_join(rf %>% change_ret_freq() %>% rename(r.rf = r))
+
+plot_strategy_performance(strategy, col.strategy = "r.strategy", col.others = c("r.spxtr", "r.ruttr"),
+                          initial_investment = 10000, title = "Chart 7: Growth of $10,000", title_add_period = T,
+                          name.strategy = "LG Small Cap Strategy", name.others = c("S&P 500 Index (TR)", "Russell 2000 (TR)"))
+
+table_strategy_performance(strategy, col.strategy = "r.strategy", col.others = c("r.spxtr", "r.ruttr"),
+                           title = "Table 6: LG Small Cap Strategy vs. S&P 500", title_add_period = T,
+                           name.strategy = "LG Small Cap Strategy", name.others = c("S&P 500 (TR)", "Russell 2000 (TR)"),
+                           col.market = "r.spxtr", col.signal = "lumber > gold",
+                           output = "datatable")
+
+# table_strategy_performance(strategy, col.strategy = "r.strategy", col.others = c("r.spxtr", "r.ruttr"),
+#                            title = "Table 6: LG Small Cap Strategy vs. S&P 500", title_add_period = T,
+#                            name.strategy = "LG Small Cap Strategy", name.others = c("S&P 500 (TR)", "Russell 2000 (TR)"),
+#                            col.market = "r.spxtr", col.signal = "lumber > gold",
+#                            output = "clip")
+```
+
+## 2) The Lumber-Gold ("LG") High Beta Strategy
+
+```{r}
+strategy <- signal_returns %>% 
+  calc_signal() %>% 
+  left_join(spxhbtr %>% calc_ret() %>% change_ret_freq(),
+            by = "date") %>% 
+  left_join(spxtr %>% calc_ret() %>% change_ret_freq(),
+            by = "date", suffix = c(".spxhbtr", ".spxtr")) %>%
+  filter_if(is.numeric, all_vars(!is.na(.))) %>% 
+  mutate(r.strategy = case_when(`lumber > gold` ~ r.spxhbtr,
+                                T ~ r.spxtr)) %>% 
+  filter(date <= date_max,
+         date >= date_min_nov) %>% 
+  left_join(rf %>% change_ret_freq() %>% rename(r.rf = r))
+
+plot_strategy_performance(strategy, col.strategy = "r.strategy", col.others = c("r.spxtr", "r.spxhbtr"),
+                          initial_investment = 10000, title = "Chart : Growth of $10,000", title_add_period = T,
+                          name.strategy = "LG High Beta Strategy", name.others = c("S&P 500 Index (TR)", "S&P 500 High Beta Index (TR)"))
+
+table_strategy_performance(strategy, col.strategy = "r.strategy", col.others = "r.spxtr",
+                           title = "Table 7: LG High Beta Strategy vs. S&P 500", title_add_period = T,
+                           name.strategy = "LG High Beta Strategy", name.others = "S&P 500 (TR)",
+                           col.market = "r.spxtr", col.signal = "lumber > gold",
+                           output = "datatable")
+
+# table_strategy_performance(strategy, col.strategy = "r.strategy", col.others = "r.spxtr",
+#                            title = "Table 7: LG High Beta Strategy vs. S&P 500", title_add_period = T,
+#                            name.strategy = "LG High Beta Strategy", name.others = "S&P 500 (TR)",
+#                            col.market = "r.spxtr", col.signal = "lumber > gold",
+#                            output = "clip")
+```
+
+## 3) The Lumber-Gold ("LG") Growth Strategy
+
+The Morgan Stanley Cyclical Index (CYC) was discontinued in 2015. What's an alternative? Russell 2000 Growth
+
+```{r}
+strategy <- signal_returns %>% 
+  calc_signal() %>% 
+  left_join(ruotrcyc %>% calc_ret() %>% change_ret_freq(),
+            by = "date") %>% 
+  left_join(spxtr %>% calc_ret() %>% change_ret_freq(),
+            by = "date", suffix = c(".ruotrcyc", ".spxtr")) %>%
+  filter_if(is.numeric, all_vars(!is.na(.))) %>% 
+  mutate(r.strategy = case_when(`lumber > gold` ~ r.ruotrcyc,
+                                T ~ r.spxtr)) %>% 
+  filter(date <= date_max,
+         date >= date_min_nov) %>% 
+  left_join(rf %>% change_ret_freq() %>% rename(r.rf = r))
+
+plot_strategy_performance(strategy, col.strategy = "r.strategy", col.others = c("r.spxtr", "r.ruotrcyc"),
+                          initial_investment = 10000, title = "Chart : Growth of $10,000", title_add_period = T,
+                          name.strategy = "LG Growth Strategy", name.others = c("S&P 500 Index (TR)", "Russel 2000 Growth TR Index"))
+
+table_strategy_performance(strategy, col.strategy = "r.strategy", col.others = "r.spxtr",
+                           title = "Table 8: LG Growth Strategy vs. S&P 500", title_add_period = T,
+                           name.strategy = "LG Growth Strategy", name.others = "S&P 500 (TR)",
+                           col.market = "r.spxtr", col.signal = "lumber > gold",
+                           output = "datatable")
+
+# table_strategy_performance(strategy, col.strategy = "r.strategy", col.others = "r.spxtr",
+#                            title = "Table 8: LG Growth Strategy vs. S&P 500", title_add_period = T,
+#                            name.strategy = "LG Growth Strategy", name.others = "S&P 500 (TR)",
+#                            col.market = "r.spxtr", col.signal = "lumber > gold",
+#                            output = "clip")
+```
+
+```{r}
+strategy <- signal_returns %>% 
+  calc_signal() %>% 
+  left_join(nasdaqtr %>% calc_ret() %>% change_ret_freq(),
+            by = "date") %>% 
+  left_join(spxtr %>% calc_ret() %>% change_ret_freq(),
+            by = "date", suffix = c(".nasdaqtr", ".spxtr")) %>%
+  filter_if(is.numeric, all_vars(!is.na(.))) %>% 
+  mutate(r.strategy = case_when(`lumber > gold` ~ r.nasdaqtr,
+                                T ~ r.spxtr)) %>% 
+  filter(date <= date_max,
+         date >= date_min_nov) %>% 
+  left_join(rf %>% change_ret_freq() %>% rename(r.rf = r))
+
+plot_strategy_performance(strategy, col.strategy = "r.strategy", col.others = c("r.spxtr", "r.nasdaqtr"),
+                          initial_investment = 10000, title = "Chart : Growth of $10,000", title_add_period = T,
+                          name.strategy = "LG Tech Strategy", name.others = c("S&P 500 Index (TR)", "NASDAQ (TR since 2013)"))
+
+table_strategy_performance(strategy, col.strategy = "r.strategy", col.others = "r.spxtr",
+                           title = "Table 9: LG Tech Strategy vs. S&P 500", title_add_period = T,
+                           name.strategy = "LG Tech Strategy", name.others = "S&P 500 (TR)",
+                           col.market = "r.spxtr", col.signal = "lumber > gold",
+                           output = "datatable")
+
+# table_strategy_performance(strategy, col.strategy = "r.strategy", col.others = "r.spxtr",
+#                            title = "Table 9: LG Tech Strategy vs. S&P 500", title_add_period = T,
+#                            name.strategy = "LG Tech Strategy", name.others = "S&P 500 (TR)",
+#                            col.market = "r.spxtr", col.signal = "lumber > gold",
+#                            output = "clip")
+
+plot_strategy_drawdowns(strategy)
+table_strategy_drawdowns(strategy)
+```
+
+# Putting It All Together: Combining Defense and Offense
+
+## 1) The Lumber-Gold ("LG") Small Bond Strategy
+
+```{r}
+strategy <- signal_returns %>% 
+  calc_signal() %>% 
+  left_join(crsp_treasury5 %>% calc_ret() %>% change_ret_freq(),
+            by = "date") %>% 
+  left_join(ruttr %>% calc_ret() %>% change_ret_freq(),
+            by = "date", suffix = c(".treasury", ".ruttr")) %>%
+  left_join(spxtr %>% calc_ret() %>% change_ret_freq() %>% rename(r.spxtr = r),
+            by = "date") %>%
+  filter_if(is.numeric, all_vars(!is.na(.))) %>% 
+  mutate(r.strategy = case_when(`lumber > gold` ~ r.ruttr,
+                                T ~ r.treasury))  %>% 
+  filter(date <= date_max,
+         date >= date_min_nov) %>% 
+  left_join(rf %>% change_ret_freq() %>% rename(r.rf = r))
+
+plot_strategy_performance(strategy, col.strategy = "r.strategy", col.others = c("r.treasury", "r.ruttr"),
+                          initial_investment = 10000, title = "Chart : Growth of $10,000", title_add_period = T,
+                          name.strategy = "LG Small Bond Strategy", 
+                          name.others = c("BB U.S. Treasury: 5 Year Index", "Russell 2000 (TR)"))
+
+table_strategy_performance(strategy, col.strategy = "r.strategy", col.others = "r.spxtr",
+                           title = "Table 10: LG Small Bond vs. S&P 500", title_add_period = T,
+                           name.strategy = "LG Small Bond", name.others = "S&P 500 TR",
+                           col.market = "r.spxtr", col.signal = "lumber > gold",
+                           output = "datatable")
+
+# table_strategy_performance(strategy, col.strategy = "r.strategy", col.others = "r.spxtr",
+#                            title = "Table 10: LG Small Bond vs. S&P 500", title_add_period = T,
+#                            name.strategy = "LG Small Bond", name.others = "S&P 500 TR",
+#                            col.market = "r.spxtr", col.signal = "lumber > gold",
+#                            output = "clip")
+```
+
+## 2) The Lumber-Gold ("LG") Tech Bond Strategy
+
+```{r}
+strategy <- signal_returns %>% 
+  calc_signal() %>% 
+  left_join(crsp_treasury5 %>% calc_ret() %>% change_ret_freq(),
+            by = "date") %>% 
+  left_join(nasdaqtr %>% calc_ret() %>% change_ret_freq(),
+            by = "date", suffix = c(".treasury", ".nasdaqtr")) %>%
+  left_join(spxtr %>% calc_ret() %>% change_ret_freq() %>% rename(r.spxtr = r),
+            by = "date") %>%
+  filter_if(is.numeric, all_vars(!is.na(.))) %>% 
+  mutate(r.strategy = case_when(`lumber > gold` ~ r.nasdaqtr,
+                                T ~ r.treasury))  %>% 
+  filter(date <= date_max,
+         date >= date_min_nov) %>% 
+  left_join(rf %>% change_ret_freq() %>% rename(r.rf = r))
+  
+
+plot_strategy_performance(strategy, col.strategy = "r.strategy", col.others = c("r.treasury", "r.nasdaqtr"),
+                          initial_investment = 10000, title = "Chart : Growth of $10,000", title_add_period = T,
+                          name.strategy = "LG Tech Bond Strategy", 
+                          name.others = c("Treasury: 5 Year Index", "Russell 2000 (TR)"))
+
+table_strategy_performance(strategy, col.strategy = "r.strategy", col.others = "r.spxtr",
+                           title = "Table 11: LG Tech Bond Strategy vs. S&P 500", title_add_period = T,
+                           name.strategy = "LG Tech Bond", name.others = "S&P 500 TR",
+                           col.market = "r.spxtr", col.signal = "lumber > gold",
+                           output = "datatable")
+
+# table_strategy_performance(strategy, col.strategy = "r.strategy", col.others = "r.spxtr",
+#                            title = "Table 11: LG Tech Bond vs. S&P 500", title_add_period = T,
+#                            name.strategy = "LG Tech Bond", name.others = "S&P 500 TR",
+#                            col.market = "r.spxtr", col.signal = "lumber > gold",
+#                            output = "clip")
+```
+
+```{r}
+strategy_small <- signal_returns %>% 
+  calc_signal() %>% 
+  left_join(crsp_treasury5 %>% calc_ret() %>% change_ret_freq(),
+            by = "date") %>% 
+  left_join(ruttr %>% calc_ret() %>% change_ret_freq(),
+            by = "date", suffix = c(".treasury", ".ruttr")) %>%
+  left_join(spxtr %>% calc_ret() %>% change_ret_freq() %>% rename(r.spxtr = r),
+            by = "date") %>%
+  filter_if(is.numeric, all_vars(!is.na(.))) %>% 
+  mutate(r.strategy = case_when(`lumber > gold` ~ r.ruttr,
+                                T ~ r.treasury))  %>% 
+  filter(date <= date_max, date >= as.Date("1988-01-04"))
+
+strategy_tech <- signal_returns %>% 
+  calc_signal() %>% 
+  left_join(crsp_treasury5 %>% calc_ret() %>% change_ret_freq(),
+            by = "date") %>% 
+  left_join(nasdaqtr %>% calc_ret() %>% change_ret_freq(),
+            by = "date", suffix = c(".treasury", ".nasdaqtr")) %>%
+  left_join(spxtr %>% calc_ret() %>% change_ret_freq() %>% rename(r.spxtr = r),
+            by = "date") %>%
+  filter_if(is.numeric, all_vars(!is.na(.))) %>% 
+  mutate(r.strategy = case_when(`lumber > gold` ~ r.nasdaqtr,
+                                T ~ r.treasury))  %>% 
+  filter(date <= date_max, date >= as.Date("1988-01-04"))
+
+performances <- left_join(strategy_small %>% select(date, r.treasury, r.ruttr, r.spxtr, r.strategy.small = r.strategy),
+          strategy_tech %>% select(date, r.strategy.tech = r.strategy),
+          by = "date") %>% 
+  pivot_longer(cols = -date, names_to = "name", values_to = "r") %>% 
+  arrange(name, date) %>% 
+  group_by(name) %>% 
+  mutate(p = cumprod(1+r)*10000)
+
+lookup_names <- c(r.strategy.tech = "LG Tech Bond Strategy",
+                  r.strategy.small = "LG Small Bond Strategy",
+                  r.treasury = "CRSP 5 Year Total Return Index",
+                  r.spxtr = "S&P 500 (TR)",
+                  r.ruttr = "Russell 2000 (TR)")
+
+performances %>% 
+    mutate(name = recode(name, !!!lookup_names),
+           name = factor(name, levels = lookup_names)) %>%
+    ggplot(aes(x = date, y = p, color = reorder(name, desc(name)))) +
+    geom_line() +
+    geom_text_repel(aes(label = if_else(date == max(date), number(p, accuracy = 1, big.mark = ",", prefix = "$"), NA_character_)), 
+                    color = "black", size = 3) +
+    scale_y_log10(labels = number_format(big.mark = ",")) +
+    scale_x_date(date_breaks = "1 year", date_labels = "%Y", expand = c(0,0)) +
+    scale_color_manual(values = c("#ff0000", "#5b9bd5", "black", "darkgreen", "purple")) +
+    labs(x = "", y = "", color = "", fill = "",
+         title = "Chart 8: Growth of $10,000") +
+    theme_classic() +
+    guides(color = guide_legend(nrow = 2, byrow = T)) +
+    theme(legend.position = "top",
+          plot.title = element_text(hjust = 0.5),
+          axis.text.x = element_text(angle = 90, vjust = 0.5))
+
+```
+
+
+# Up Capture, Down Capture, and False Positives
+
+```{r}
+capture_tech <- strategy_tech %>% 
+  left_join(spxtr %>% transmute(date, r = adjusted/lag(adjusted)-1) %>% change_ret_freq() %>% rename(r.ind = r),
+            by = "date") %>% 
+  select(date, r.strategy, r.ind) %>% 
+  group_by(date = floor_date(date, "months")) %>% 
+  summarise(r.ind = prod(1+r.ind, na.rm = T)-1,
+            r.strategy = prod(1+r.strategy, na.rm = T)-1) %>% 
+  tq_performance(Ra = r.strategy, Rb = r.ind, 
+                 performance_fun = UpDownRatios, method = "Capture") %>% 
+  mutate(`Up/Down Ratio` = UpCapture/DownCapture) %>% 
+  transmute(`Up Capture` = percent(UpCapture), `Down Capture` = percent(DownCapture),
+            `Up/Down Ratio` = number(`Up/Down Ratio`, accuracy = 0.01)) %>% 
+  t() %>% 
+  as.data.frame() %>% 
+  rename(`LG Tech Bond` = 1) %>% 
+  rownames_to_column(" ") 
+
+capture_small <- strategy_small %>% 
+  left_join(spxtr %>% transmute(date, r = adjusted/lag(adjusted)-1) %>% change_ret_freq() %>% rename(r.ind = r),
+            by = "date") %>% 
+  select(date, r.strategy, r.ind) %>% 
+  group_by(date = floor_date(date, "months")) %>% 
+  summarise(r.ind = prod(1+r.ind, na.rm = T)-1,
+            r.strategy = prod(1+r.strategy, na.rm = T)-1) %>% 
+  tq_performance(Ra = r.strategy, Rb = r.ind, 
+                 performance_fun = UpDownRatios, method = "Capture") %>% 
+  mutate(`Up/Down Ratio` = UpCapture/DownCapture) %>% 
+  transmute(`Up Capture` = percent(UpCapture), `Down Capture` = percent(DownCapture),
+            `Up/Down Ratio` = number(`Up/Down Ratio`, accuracy = 0.01)) %>% 
+  t() %>% 
+  as.data.frame() %>% 
+  rename(`LG Small Bond` = 1) %>% 
+  rownames_to_column(" ") 
+
+
+bind_cols(capture_tech, capture_small %>% select(2)) %>% 
+  as_dt(caption = "Table 12: Up Capture vs. Down Capture")
+```
+
+# What about the 1970s?
+
+```{r}
+signal_returns <- bind_rows(lumber_wiki %>% 
+                              filter(date >= min(gold$date)) %>% 
+                              transmute(date, r = adjusted/lag(adjusted)-1, series = "lumber"),
+                            gold %>% 
+                              filter(date >= min(lumber_wiki$date)) %>% 
+                              transmute(date, r = adjusted/lag(adjusted)-1, series = "gold"))
+
+strategy <- signal_returns %>% 
+  calc_signal() %>% 
+  left_join(crsp_treasury5 %>% calc_ret() %>% change_ret_freq(),
+            by = "date") %>% 
+  left_join(spxtr %>% calc_ret() %>% change_ret_freq(),
+            by = "date", suffix = c(".treasury", ".spxtr")) %>%
+  filter_if(is.numeric, all_vars(!is.na(.))) %>% 
+  mutate(r.strategy = case_when(`lumber > gold` ~ r.spxtr,
+                                T ~ r.treasury)) %>% 
+  filter(#date <= date_max,
+         # date <= as.Date("2015-01-01"),
+         date < date_min_nov
+         # date >= as.Date("1988-01-01")
+         ) %>% 
+  left_join(rf %>% change_ret_freq() %>% rename(r.rf = r))
+
+strategy %>% 
+  select(date, r.strategy) %>% 
+  tibble_to_xts() %>% 
+  table.Drawdowns()
+
+plot_strategy_performance(strategy)
+
+# table_strategy_performance(strategy, output = "clip")
+table_strategy_performance(strategy, title = "Table 13: LG Bond Strategy vs. S&P 500")
+
+
+plot_strategy_drawdowns(strategy)
+
+# table_strategy_drawdowns(strategy, output = "clip")
+table_strategy_drawdowns(strategy)
+```
+
+```{r}
+strategy <- signal_returns %>% 
+  calc_signal() %>% 
+  left_join(ruotrcyc %>% calc_ret() %>% change_ret_freq(),
+            by = "date") %>% 
+  left_join(spxtr %>% calc_ret() %>% change_ret_freq(),
+            by = "date", suffix = c(".ruotrcyc", ".spxtr")) %>%
+  filter_if(is.numeric, all_vars(!is.na(.))) %>% 
+  mutate(r.strategy = case_when(`lumber > gold` ~ r.ruotrcyc,
+                                T ~ r.spxtr)) %>% 
+  filter(#date <= date_max,
+         # date <= as.Date("2015-01-01"),
+         date < date_min_nov
+         # date >= as.Date("1988-01-01")
+         ) %>% 
+  left_join(rf %>% change_ret_freq() %>% rename(r.rf = r))
+  
+
+plot_strategy_performance(strategy, col.strategy = "r.strategy", col.others = c("r.spxtr", "r.ruotrcyc"),
+                          initial_investment = 10000, title = "Chart : Growth of $10,000", title_add_period = T,
+                          name.strategy = "LG Growth Strategy", name.others = c("S&P 500 Index (TR)", "Russel 2000 Growth TR Index"))
+
+table_strategy_performance(strategy, col.strategy = "r.strategy", col.others = "r.spxtr",
+                           title = "Table 8: LG Growth Strategy vs. S&P 500", title_add_period = T,
+                           name.strategy = "LG Growth Strategy", name.others = "S&P 500 (TR)",
+                           col.market = "r.spxtr", col.signal = "lumber > gold",
+                           output = "datatable")
+```
+
+# On the Signal Quality
+
+```{r}
+signal_returns_copper  <- bind_rows(lumber %>% 
+                                      transmute(date, r = adjusted/lag(adjusted)-1, series = "lumber"),
+                                    gold %>% 
+                                      transmute(date, r = adjusted/lag(adjusted)-1, series = "gold"),
+                                    copper %>% 
+                                      transmute(date, r = adjusted/lag(adjusted)-1, series = "copper"))
+
+strategy_copper <- signal_returns_copper %>% 
+  calc_signal(signal = "copper > gold")
+```
+
+```{r}
+strategy <- signal_returns %>% 
+  calc_signal() %>% 
+  left_join(crsp_treasury5 %>% calc_ret() %>% change_ret_freq(),
+            by = "date") %>% 
+  left_join(spxtr %>% calc_ret() %>% change_ret_freq(),
+            by = "date", suffix = c(".treasury", ".spxtr")) %>%
+  filter_if(is.numeric, all_vars(!is.na(.))) %>% 
+  mutate(r.strategy = case_when(`lumber > gold` ~ r.spxtr,
+                                T ~ r.treasury)) %>% 
+  filter(date <= date_max,
+         date >= date_min_nov)
+
+mkt_utils_strength <- readRDS("mkt_utils_strength.RDS")
+
+strategy_combined <- strategy %>% 
+  left_join(mkt_utils_strength %>% select(date, signal4),
+            by = "date") %>% 
+  # left_join(strategy_copper %>% select(date, `copper > gold`),
+  #           by = "date") %>% 
+  mutate(signal3 = signal4 == "mkt") %>% 
+  filter(!is.na(signal3))
+
+
+risk_off <- tibble()
+for (i in seq(from = 0.5, to = 0.01, by = -0.01)) {
+  o <- strategy_combined %>% 
+    filter(r.spxtr < quantile(r.spxtr, i)) %>% 
+    summarise(risk_on_lg = mean(`lumber > gold`),
+              # risk_on_cg = mean(`copper > gold`),
+              risk_on_mu = mean(signal3),
+              r.spxtr = max(r.spxtr),
+              i = i) %>% 
+    mutate(risk_off_lg = 1-risk_on_lg,
+           # risk_off_cg = 1-risk_on_cg,
+           risk_off_mu = 1-risk_on_mu)
+  
+  risk_off <- bind_rows(risk_off, o)
+}
+risk_off %>% 
+  select(i, starts_with("risk_off")) %>% 
+  pivot_longer(cols = -i) %>% 
+  mutate(name = case_when(str_detect(name, "lg") ~ "Lumber-Gold signal",
+                          # str_detect(name, "cg") ~ "Copper-Gold",
+                          str_detect(name, "mu") ~ "Market-Utils signal")) %>% 
+  ggplot(aes(x = i, y = value, color = name)) + 
+  geom_line() +
+  scale_x_reverse() +
+  scale_y_continuous(labels = percent) +
+  labs(title = "Chart 9: Risk-Off Percent per Index Return Quantile (worst 50% weekly returns)",
+       x = "quantiles of worst S&P 500 weekly returns", 
+       y = "average positioned Risk-Off (cumulative)",
+       color = "") +
+  scale_color_manual(values = c("red", "blue")) +
+  theme_classic() +
+  theme(legend.position = "top")
+```
+
+
+
+# Replicating with ETFs
+
+* Treasury: iShares 3-7 Year Treasury Bond ETF (*IEI*) 
+    * Inception Jan 2007
+
+* Treasury: iShares 7-10 Year Treasury Bond ETF (*IEF*)
+    * Inception Jul 2002
+    
+* *GOVT*
+
+* Market: SPDR S&P 500 ETF (*SPY*)
+* Small Cap: iShares Russell 2000 ETF (*IWM*) 
+
+
+```{r}
+bind_rows(govt %>% calc_ret() %>% mutate(symbol = "GOVT"),
+          iei %>% calc_ret() %>% mutate(symbol = "IEI"),
+          ief %>% calc_ret() %>% mutate(symbol = "IEF"),
+          spy %>% calc_ret() %>% mutate(symbol = "SPY"),
+          iwm %>% calc_ret() %>% mutate(symbol = "IWM")) %>% 
+  filter(!is.na(r)) %>% 
+  filter(date <= as.Date("2020-12-28"), date >= as.Date("2012-02-27")) %>% 
+  # group_by(symbol) %>%
+  # summarise(min = min(date), max = max(date))
+  pivot_wider(names_from = symbol, values_from = r) %>% 
+  select(-date) %>% 
+  cor()
+
+bind_rows(govt %>% calc_ret() %>% mutate(symbol = "GOVT"),
+          iei %>% calc_ret() %>% mutate(symbol = "IEI"),
+          ief %>% calc_ret() %>% mutate(symbol = "IEF"),
+          spy %>% calc_ret() %>% mutate(symbol = "SPY"),
+          iwm %>% calc_ret() %>% mutate(symbol = "IWM")) %>% 
+  filter(!is.na(r)) %>% 
+  filter(date <= as.Date("2020-12-28"), date >= as.Date("2012-02-27")) %>% 
+  group_by(symbol) %>% 
+  tq_performance(Ra = r, performance_fun = table.AnnualizedReturns)
+
+```
+
+```{r}
+strategy <- signal_returns %>% 
+  calc_signal() %>% 
+  left_join(iei %>% calc_ret() %>% change_ret_freq(),
+            by = "date") %>% 
+  left_join(spy %>% calc_ret() %>% change_ret_freq(),
+            by = "date", suffix = c(".iei", ".spy")) %>%
+  filter_if(is.numeric, all_vars(!is.na(.))) %>% 
+  mutate(r.strategy = case_when(`lumber > gold` ~ r.spy,
+                                T ~ r.iei))
+
+plot_strategy_performance(strategy, col.strategy = "r.strategy", col.others = c("r.iei", "r.spy"),
+                          initial_investment = 10000, title = "Chart : Growth of $10,000", title_add_period = T,
+                          name.strategy = "_LG SPY-IEI Strategy", 
+                          name.others = c("IEI", "SPY"))
+```
+
+```{r}
+strategy <- signal_returns %>% 
+  calc_signal() %>% 
+  left_join(iei %>% calc_ret() %>% change_ret_freq(),
+            by = "date") %>% 
+  left_join(iwm %>% calc_ret() %>% change_ret_freq(),
+            by = "date", suffix = c(".iei", ".iwm")) %>%
+  filter_if(is.numeric, all_vars(!is.na(.))) %>% 
+  mutate(r.strategy = case_when(`lumber > gold` ~ r.iwm,
+                                T ~ r.iei))
+
+plot_strategy_performance(strategy, col.strategy = "r.strategy", col.others = c("r.iei", "r.iwm"),
+                          initial_investment = 10000, title = "Chart : Growth of $10,000", title_add_period = T,
+                          name.strategy = "_LG IWM-IEI Strategy", 
+                          name.others = c("IEI", "IWM"))
+```
+
+```{r}
+strategy <- signal_returns %>% 
+  calc_signal() %>% 
+  left_join(ief %>% calc_ret() %>% change_ret_freq(),
+            by = "date") %>% 
+  left_join(spy %>% calc_ret() %>% change_ret_freq(),
+            by = "date", suffix = c(".ief", ".spy")) %>%
+  filter_if(is.numeric, all_vars(!is.na(.))) %>% 
+  mutate(r.strategy = case_when(`lumber > gold` ~ r.spy,
+                                T ~ r.ief))
+
+plot_strategy_performance(strategy, col.strategy = "r.strategy", col.others = c("r.ief", "r.spy"),
+                          initial_investment = 10000, title = "Chart : Growth of $10,000", title_add_period = T,
+                          name.strategy = "_LG SPY-IEF Strategy", 
+                          name.others = c("IEF", "SPY"))
+```
+
+```{r}
+strategy <- signal_returns %>% 
+  calc_signal() %>% 
+  left_join(ief %>% calc_ret() %>% change_ret_freq(),
+            by = "date") %>% 
+  left_join(iwm %>% calc_ret() %>% change_ret_freq(),
+            by = "date", suffix = c(".ief", ".iwm")) %>%
+  filter_if(is.numeric, all_vars(!is.na(.))) %>% 
+  mutate(r.strategy = case_when(`lumber > gold` ~ r.iwm,
+                                T ~ r.ief)) %>% 
+  filter(date <= date_max) %>% 
+  left_join(rf %>% change_ret_freq() %>% rename(r.rf = r))
+  # filter(date >= as.Date("2002-07-01"))
+
+plot_strategy_performance(strategy, col.strategy = "r.strategy", col.others = c("r.ief", "r.iwm"),
+                          initial_investment = 10000, title = "Chart 10: Growth of $10,000", title_add_period = T,
+                          name.strategy = "LG IWM-IEF Strategy", 
+                          name.others = c("IEF (iShares 7-10 Y Treasury ETF)", "IWM (iShares Russell 2000 ETF)"))
+
+table_strategy_performance(strategy, col.strategy = "r.strategy", col.others = "r.ief",
+                           title = "Table : LG Growth Strategy vs. S&P 500", title_add_period = T,
+                           name.strategy = "LG Growth Strategy", name.others = "S&P 500 (TR)",
+                           col.market = "r.ief", col.signal = "lumber > gold",
+                           output = "datatable")
+```
+
+```{r}
+strategy <- signal_returns %>% 
+  calc_signal() %>% 
+  left_join(ief %>% calc_ret() %>% change_ret_freq(),
+            by = "date") %>% 
+  left_join(spy %>% calc_ret() %>% change_ret_freq(),
+            by = "date", suffix = c(".govt", ".spy")) %>%
+  filter_if(is.numeric, all_vars(!is.na(.))) %>% 
+  mutate(r.strategy = case_when(`lumber > gold` ~ r.spy,
+                                T ~ r.govt)) %>% 
+  filter(date <= as.Date("2020-12-28"), date >= as.Date("2012-02-27")) %>% 
+  left_join(rf %>% change_ret_freq() %>% rename(r.rf = r))
+
+plot_strategy_performance(strategy, col.strategy = "r.strategy", col.others = c("r.govt", "r.spy"),
+                          initial_investment = 10000, title = "Chart : Growth of $10,000", title_add_period = T,
+                          name.strategy = "LG SPY-GOVT Strategy", 
+                          name.others = c("GOVT", "SPY"))
+
+# table_strategy_performance(strategy, col.strategy = "r.strategy", col.others = "r.ief",
+#                            title = "Table : LG Growth Strategy vs. S&P 500", title_add_period = T,
+#                            name.strategy = "LG Growth Strategy", name.others = "S&P 500 (TR)",
+#                            col.market = "r.ief", col.signal = "lumber > gold",
+#                            output = "datatable")
+```
+
+# Copper Signal
+
+```{r}
+signal_returns_copper  <- bind_rows(lumber %>% 
+                                      transmute(date, r = adjusted/lag(adjusted)-1, series = "lumber"),
+                                    gold %>% 
+                                      transmute(date, r = adjusted/lag(adjusted)-1, series = "gold"),
+                                    copper %>% 
+                                      transmute(date, r = adjusted/lag(adjusted)-1, series = "copper"))
+
+strategy_copper <- signal_returns_copper %>% 
+  calc_signal(signal = "copper > gold") %>% 
+  left_join(bb_5_7_yr_index %>% calc_ret() %>% change_ret_freq(),
+            by = "date") %>% 
+  left_join(spxtr %>% calc_ret() %>% change_ret_freq(),
+            by = "date", suffix = c(".treasury", ".spxtr")) %>%
+  filter_if(is.numeric, all_vars(!is.na(.))) %>% 
+  mutate(r.strategy = case_when(`copper > gold` ~ r.spxtr,
+                                T ~ r.treasury))
+
+strategy_lumber <- signal_returns_copper %>% 
+  calc_signal(signal = "lumber > gold") %>% 
+  left_join(bb_5_7_yr_index %>% calc_ret() %>% change_ret_freq(),
+            by = "date") %>% 
+  left_join(spxtr %>% calc_ret() %>% change_ret_freq(),
+            by = "date", suffix = c(".treasury", ".spxtr")) %>%
+  filter_if(is.numeric, all_vars(!is.na(.))) %>% 
+  mutate(r.strategy = case_when(`lumber > gold` ~ r.spxtr,
+                                T ~ r.treasury))
+
+strategies <- strategy_copper %>% 
+  left_join(strategy_lumber %>% select(date, r.strategy, `lumber > gold`),
+            by = "date", 
+            suffix = c(".copper", ".lumber"))
+  
+
+plot_strategy_performance(strategies, col.strategy = "r.strategy.lumber", col.others = c("r.strategy.copper", "r.treasury", "r.spxtr"),
+                          initial_investment = 10000, title = "Chart : Growth of $10,000", title_add_period = T,
+                          name.strategy = "LG Bond Strategy", name.others = c("CG Bond Strategy", "Treasury", "S&P 500 (TR)"))
+
+```
+
+# Signal Overlap
+
+```{r}
+mkt_utils_strength <- readRDS("mkt_utils_strength.RDS")
+
+signal_lg <- signal_returns %>% 
+  calc_signal()
+
+utils_risk_on_off <- mkt_utils_strength %>% 
+  select(date, signal4) %>% 
+  mutate(allocation = case_when(signal4 == "utils" ~ 0,
+                                   signal4 == "mkt" ~ 1))
+
+lg_risk_on_off <- signal_lg %>% 
+  select(date, `lumber > gold`) %>% 
+  mutate(allocation = case_when(`lumber > gold` ~ 1,
+                                   !`lumber > gold` ~ 0))
+
+bind_rows(utils_risk_on_off %>% mutate(signal = "MktUtils4"),
+          lg_risk_on_off %>% mutate(signal = "LumberGold")) %>% 
+  filter(date >= as.Date("2015-01-01")) %>% 
+  ggplot(aes(x = date, y = allocation, color = signal)) +
+  geom_line() +
+  facet_wrap(~signal, ncol = 1) +
+  theme_classic() +
+  theme(legend.position = "none")
+
+bind_rows(utils_risk_on_off %>% mutate(signal = "MktUtils4"),
+          lg_risk_on_off %>% mutate(signal = "LumberGold")) %>% 
+  filter(date >= as.Date("2015-01-01")) %>% 
+  select(date, allocation, signal) %>% 
+  pivot_wider(names_from = signal, values_from = allocation) %>% 
+  filter(!is.na(MktUtils4), !is.na(LumberGold)) %>% 
+  summarise(cor = cor(MktUtils4, LumberGold))
+
+bind_rows(utils_risk_on_off %>% mutate(signal = "MktUtils4"),
+          lg_risk_on_off %>% mutate(signal = "LumberGold")) %>% 
+  # filter(date >= as.Date("2015-01-01")) %>% 
+  select(date, allocation, signal) %>% 
+  pivot_wider(names_from = signal, values_from = allocation) %>% 
+  filter(!is.na(MktUtils4), !is.na(LumberGold)) %>% 
+  summarise(cor = cor(MktUtils4, LumberGold))
+
+```
+
+```{r}
+mkt_utils_strength <- readRDS("mkt_utils_strength.RDS")
+
+mkt_utils_strength %>% 
+  filter(date >= as.Date("1975-03-30")) %>% 
+  group_by(quantile = cut(mkt, quantile(.$mkt, probs = seq(0,1, by = 0.02)), labels = F)) %>% 
+  summarise(risk_off = mean(w.mkt4),
+            mkt = mean(mkt)) %>% 
+  ggplot(aes(x = quantile, y = risk_off, fill = mkt>0)) +
+  geom_col() +
+  geom_line(aes(y = mkt))
+
+lg_risk_on_off %>% 
+  # left_join(mkt %>% change_ret_freq() %>% rename(r.mkt = r),
+  #           by = "date") %>% 
+  left_join(spxtr %>% calc_ret() %>% change_ret_freq() %>% rename(r.mkt = r),
+            by = "date") %>% 
+  filter(!is.na(r.mkt)) %>% 
+  group_by(quantile = 0.02*cut(r.mkt, quantile(.$r.mkt, probs = seq(0, 1, by = 0.02)), labels = F)) %>% 
+  summarise(risk_off = 1-mean(`lumber > gold`),
+            r.mkt = mean(r.mkt),
+            n = n()) %>% 
+  mutate(mkt_up = ifelse(r.mkt > 0, "Up", "Down")) %>% 
+  ggplot(aes(x = quantile)) +
+  geom_col(aes(y = risk_off, fill = mkt_up)) +
+  geom_line(aes(y = r.mkt*10)) +
+  geom_smooth(aes(y = risk_off, group = r.mkt>0), method = "lm", se = F) +
+  scale_y_continuous(labels = percent, breaks = c(0,0.5, 1), name = "Percent Risk Off",
+                     sec.axis = sec_axis(~ . / 10, labels = percent_format(accuracy = 1), name = "Weekly Market Return (curve)")) +
+  coord_cartesian(ylim = c(-0.7, 1)) +
+  labs(fill = "Mkt") +
+  theme_classic()
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
