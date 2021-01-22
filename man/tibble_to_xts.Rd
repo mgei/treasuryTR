@@ -2,16 +2,16 @@
 % Please edit documentation in R/tibble_to_xts.R
 \name{tibble_to_xts}
 \alias{tibble_to_xts}
-\title{Title}
+\title{Convert a tibble data frame to an xts object}
 \usage{
 tibble_to_xts(x)
 }
 \arguments{
-\item{x}{}
+\item{x}{a tibble with a column 'date'}
 }
 \value{
-
+An xts object
 }
 \description{
-Title
+Convert a tibble data frame to an xts object
 }

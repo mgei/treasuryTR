@@ -2,22 +2,47 @@
 % Please edit documentation in R/get_yields.R
 \name{get_yields}
 \alias{get_yields}
-\title{get_yields}
+\title{Load data from FRED}
 \usage{
-get_yields(series = "DGS10", na_locf = T, percent_adjust = T, ...)
+get_yields(
+  series = "DGS10",
+  na_locf = T,
+  percent_adjust = T,
+  format_out = "xts",
+  ...
+)
 }
 \arguments{
-\item{series}{The series code as found on https://fred.stlouisfed.org/}
+\item{series}{The series code as found on https://fred.stlouisfed.org/, see details}
+
+\item{na_locf}{replace NA's with last observation}
+
+\item{percent_adjust}{divide raw data by 100}
 
 \item{...}{Additional parameters handed to quantmod::getSymbols}
 }
 \value{
-The yields data as xts
+The yields data as an xts object
 }
 \description{
-get_yields
+Load data from FRED
 }
 \details{
-1-Month Treasury Constant Maturity Rate: DGS1MO
-10-Year Treasury Constant Maturity Rate: DGS10
+The function is a wrapper for quantmod::getSymbols().
+
+Commonly used constant-maturity yield series are:
+
+\itemize{
+ \item{DGS1MO: 1-Month Treasury Constant Maturity Rate}
+ \item{DGS3MO: 3-Month Treasury Constant Maturity Rate}
+ \item{DGS6MO: 6-Month Treasury Constant Maturity Rate}
+ \item{DGS1: 1-Year Treasury Constant Maturity Rate}
+ \item{DGS2: 2-Year Treasury Constant Maturity Rate}
+ \item{DGS3: 3-Year Treasury Constant Maturity Rate}
+ \item{DGS5: 5-Year Treasury Constant Maturity Rate}
+ \item{DGS7: 7-Year Treasury Constant Maturity Rate}
+ \item{DGS10: 10-Year Treasury Constant Maturity Rate}
+ \item{DGS20: 20-Year Treasury Constant Maturity Rate}
+ \item{DGS30: 30-Year Treasury Constant Maturity Rate}
+}
 }
