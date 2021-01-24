@@ -1,7 +1,7 @@
 #' Load data from FRED
 #' @param series The series code as found on https://fred.stlouisfed.org/, see details
 #' @param ... Additional parameters handed to quantmod::getSymbols
-#' @param format_out ADD DOCUMENTATION
+#' @param format_out xts or tibble
 #' @param na_locf replace NA's with last observation
 #' @param percent_adjust divide raw data by 100
 #'

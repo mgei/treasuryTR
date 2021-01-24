@@ -19,7 +19,7 @@ get_yields(
 
 \item{percent_adjust}{divide raw data by 100}
 
-\item{format_out}{ADD DOCUMENTATION}
+\item{format_out}{xts or tibble}
 
 \item{...}{Additional parameters handed to quantmod::getSymbols}
 }
