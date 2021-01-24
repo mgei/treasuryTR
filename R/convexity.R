@@ -14,22 +14,17 @@
 #'
 #' The convexity is the interest rate sensitivity of the modified duration.
 #'
-#' \usepackage{lmodern}
-#'
-#' \deqn{convexity = C_1 - C_2}{hello}
+#' \deqn{convexity = C_1 - C_2}{convexity = C_1 - C_2}
 #'
 #' where
 #'
-#' \deqn{C_1 = \frac{2}{y_t^2} (1-{z_t}^{-2M})}{hello}
-#' \deqn{C_2 = \frac{2M}{y_t}{z_t}^{-2M-1}}{hello}
-#' \deqn{z_t = 1+\frac{y_t}{2}}{hello}
+#' \deqn{C_1 = \frac{2}{y_t^2} (1-{z_t}^{-2M})}{C_1 = 2/(y_t^2) * (1-z_t^(-2M))}
+#' \deqn{C_2 = \frac{2M}{y_t}{z_t}^{-2M-1}}{C_2 = 2M/y_t * z_t^(-2M-1)}
+#' \deqn{z_t = 1+\frac{y_t}{2}}{z_t = 1 + y_t/2}
 #'
 #' \eqn{M}{M} is the maturity in years (e.g. 10), \eqn{y_t}{t_y} is the yield at time \eqn{t}{t}.
 #'
-#' @return
 #' @export
-#'
-#' @examples
 convexity <- function(yields, maturity, format_out = "xts") {
   if (!(format_out %in% c("xts", "tibble"))) {
     stop("format_out has to be one of xts or tibble")

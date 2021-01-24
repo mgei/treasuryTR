@@ -24,13 +24,11 @@ This function is normally used in combination with total_return() to compute bon
 
 The modified duration is the interest rate sensitivity of the price of bond.
 
-\usepackage{lmodern}
-
-\deqn{duration = \frac{1}{y_t} {z_t}^{2M}}{duration = 1/y_t * z_t^(2M)}{hello}
+\deqn{duration = \frac{1}{y_t}{z_t}^{2M}}{duration = 1/(y_t) * z_t^(2M)}
 
 with
 
-\deqn{z_t = 1+\frac{y_t}{2}}{z_t = 1 + y_t / 2}{hello}
+\deqn{z_t = 1+\frac{y_t}{2}}{z_t = 1 + y_t/2}
 
 \eqn{M}{M} is the maturity in years (e.g. 10), \eqn{y_t}{y_t} is the yield at time \eqn{t}{t}.
 }

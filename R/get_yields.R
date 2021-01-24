@@ -29,9 +29,11 @@
 #' @export
 #'
 #' @examples
+#' # US 1-Month yields
+#' yields_us_1m <- get_yields(series = "DGS1MO")
 get_yields <- function(series = "DGS10", na_locf = T,
                        percent_adjust = T, format_out = "xts", ...) {
-  yields <- quantmod::getSymbols(Symbols = "DGS10",
+  yields <- quantmod::getSymbols(Symbols = series,
                                  src = "FRED", auto.assign = F, ...)
   if (!(format_out %in% c("xts", "tibble"))) {
     stop("format_out has to be one of xts or tibble")

@@ -46,3 +46,7 @@ Commonly used constant-maturity yield series are:
  \item{DGS30: 30-Year Treasury Constant Maturity Rate}
 }
 }
+\examples{
+# US 1-Month yields
+yields_us_1m <- get_yields(series = "DGS1MO")
+}
