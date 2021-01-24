@@ -1,7 +1,7 @@
 #' Load data from FRED
-#'
 #' @param series The series code as found on https://fred.stlouisfed.org/, see details
 #' @param ... Additional parameters handed to quantmod::getSymbols
+#' @param format_out ADD DOCUMENTATION
 #' @param na_locf replace NA's with last observation
 #' @param percent_adjust divide raw data by 100
 #'
@@ -13,17 +13,17 @@
 #' Commonly used constant-maturity yield series are:
 #'
 #' \itemize{
-#'  \item{DGS1MO: 1-Month Treasury Constant Maturity Rate}
-#'  \item{DGS3MO: 3-Month Treasury Constant Maturity Rate}
-#'  \item{DGS6MO: 6-Month Treasury Constant Maturity Rate}
-#'  \item{DGS1: 1-Year Treasury Constant Maturity Rate}
-#'  \item{DGS2: 2-Year Treasury Constant Maturity Rate}
-#'  \item{DGS3: 3-Year Treasury Constant Maturity Rate}
-#'  \item{DGS5: 5-Year Treasury Constant Maturity Rate}
-#'  \item{DGS7: 7-Year Treasury Constant Maturity Rate}
-#'  \item{DGS10: 10-Year Treasury Constant Maturity Rate}
-#'  \item{DGS20: 20-Year Treasury Constant Maturity Rate}
-#'  \item{DGS30: 30-Year Treasury Constant Maturity Rate}
+#' \item{DGS1MO: 1-Month Treasury Constant Maturity Rate}
+#' \item{DGS3MO: 3-Month Treasury Constant Maturity Rate}
+#' \item{DGS6MO: 6-Month Treasury Constant Maturity Rate}
+#' \item{DGS1: 1-Year Treasury Constant Maturity Rate}
+#' \item{DGS2: 2-Year Treasury Constant Maturity Rate}
+#' \item{DGS3: 3-Year Treasury Constant Maturity Rate}
+#' \item{DGS5: 5-Year Treasury Constant Maturity Rate}
+#' \item{DGS7: 7-Year Treasury Constant Maturity Rate}
+#' \item{DGS10: 10-Year Treasury Constant Maturity Rate}
+#' \item{DGS20: 20-Year Treasury Constant Maturity Rate}
+#' \item{DGS30: 30-Year Treasury Constant Maturity Rate}
 #' }
 #'
 #' @export
