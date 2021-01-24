@@ -1,0 +1,124 @@
+==> devtools::check()
+
+Updating treasuryTR documentation
+Loading treasuryTR
+Registered S3 method overwritten by 'quantmod':
+  method            from
+  as.zoo.data.frame zoo 
+Loading required package: quantmod
+Loading required package: xts
+Loading required package: zoo
+
+Attaching package: 'zoo'
+
+The following objects are masked from 'package:base':
+
+    as.Date, as.Date.numeric
+
+Loading required package: TTR
+Loading required package: dplyr
+
+Attaching package: 'dplyr'
+
+The following objects are masked from 'package:xts':
+
+    first, last
+
+The following objects are masked from 'package:stats':
+
+    filter, lag
+
+The following objects are masked from 'package:base':
+
+    intersect, setdiff, setequal, union
+
+Writing NAMESPACE
+Writing NAMESPACE
+-- Building ------------------------------------ treasuryTR --
+Setting env vars:
+* CFLAGS    : -Wall -pedantic -fdiagnostics-color=always
+* CXXFLAGS  : -Wall -pedantic -fdiagnostics-color=always
+* CXX11FLAGS: -Wall -pedantic -fdiagnostics-color=always
+--------------------------------------------------------------
+v  checking for file 'E:\dfcoelho\Documents\GitHub\treasuryTR/DESCRIPTION' (1.5s)
+-  preparing 'treasuryTR': (621ms)
+v  checking DESCRIPTION meta-information ... 
+-  installing the package to build vignettes
+v  creating vignettes (28.9s)
+-  checking for LF line-endings in source and make files and shell scripts (398ms)
+-  checking for empty or unneeded directories
+-  building 'treasuryTR_0.1.0.tar.gz'
+   
+-- Checking ------------------------------------ treasuryTR --
+Setting env vars:
+* _R_CHECK_CRAN_INCOMING_USE_ASPELL_: TRUE
+* _R_CHECK_CRAN_INCOMING_REMOTE_    : FALSE
+* _R_CHECK_CRAN_INCOMING_           : FALSE
+* _R_CHECK_FORCE_SUGGESTS_          : FALSE
+* NOT_CRAN                          : true
+-- R CMD check -----------------------------------------------------------------
+-  using log directory 'E:/dfcoelho/Documents/GitHub/treasuryTR.Rcheck' (948ms)
+-  using R version 4.0.3 (2020-10-10)
+-  using platform: x86_64-w64-mingw32 (64-bit)
+-  using session charset: ISO8859-1
+-  using options '--no-manual --as-cran'
+v  checking for file 'treasuryTR/DESCRIPTION' ...
+-  checking extension type ... Package
+-  this is package 'treasuryTR' version '0.1.0'
+-  package encoding: UTF-8
+v  checking package namespace information ...
+v  checking package dependencies (10.5s)
+v  checking if this is a source package ...
+v  checking if there is a namespace
+v  checking for executable files (836ms)
+v  checking for hidden files and directories ... 
+v  checking for portable file names ... 
+v  checking serialization versions ... 
+v  checking whether package 'treasuryTR' can be installed (14.8s)
+v  checking installed package size ... 
+v  checking package directory (673ms)
+v  checking for future file timestamps (1.2s)
+v  checking 'build' directory ...
+v  checking DESCRIPTION meta-information (952ms)
+v  checking top-level files ...
+v  checking for left-over files
+v  checking index information (690ms)
+v  checking package subdirectories (714ms)
+v  checking R files for non-ASCII characters ... 
+v  checking R files for syntax errors (361ms)
+v  checking whether the package can be loaded (2s)
+v  checking whether the package can be loaded with stated dependencies (2s)
+v  checking whether the package can be unloaded cleanly (2s)
+v  checking whether the namespace can be loaded with stated dependencies (1.9s)
+v  checking whether the namespace can be unloaded cleanly (2s)
+v  checking loading without being on the library search path (2.2s)
+v  checking dependencies in R code (2s)
+v  checking S3 generic/method consistency (3s)
+v  checking replacement functions (1.9s)
+v  checking foreign function calls (1.9s)
+v  checking R code for possible problems (9.8s)
+v  checking Rd files (691ms)
+v  checking Rd metadata ... 
+v  checking Rd line widths (334ms)
+v  checking Rd cross-references (581ms)
+v  checking for missing documentation entries (2s)
+v  checking for code/documentation mismatches (6.2s)
+v  checking Rd \usage sections (3.4s)
+v  checking Rd contents (450ms)
+v  checking for unstated dependencies in examples (359ms)
+v  checking installed files from 'inst/doc' ... 
+v  checking files in 'vignettes' ... 
+v  checking examples (8.6s)
+v  checking for unstated dependencies in vignettes (583ms)
+v  checking package vignettes in 'inst/doc' ... 
+v  checking re-building of vignette outputs (20.5s)
+v  checking for non-standard things in the check directory
+v  checking for detritus in the temp directory
+   
+   
+-- R CMD check results ----------------------------------- treasuryTR 0.1.0 ----
+Duration: 1m 48.3s
+
+0 errors v | 0 warnings v | 0 notes v
+
+R CMD check succeeded

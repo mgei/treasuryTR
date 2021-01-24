@@ -66,5 +66,5 @@ t10_tr <- t10_yield \%>\%
   mutate(convexity = convexity(DGS10, 10),
          mod_duration = mod_duration(DGS10, 10),
          TR = total_return(DGS10, 10, mod_duration, convexity))
-head(t10_r)
+head(t10_tr)
 }
