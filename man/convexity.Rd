@@ -13,6 +13,9 @@ convexity(yields, maturity, format_out = "xts")
 
 \item{format_out}{xts or tibble}
 }
+\value{
+The convexity or a series of convexities of a bond with the given yield and maturity
+}
 \description{
 Calculates the convexity of a bond.
 

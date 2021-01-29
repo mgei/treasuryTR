@@ -41,7 +41,7 @@ The TR can be computed from publicly available (constant-maturity) yield-to-matu
 
 Common maturities are: *DGS1MO* 1-Month, *DGS3MO*: 3-Month, *DGS6MO*: 6-Month, *DGS1* 1-Year, *DGS2* 2-Year, *DGS3* 3-Year, *DGS5* 5-Year, *DGS7* 7-Year, *DGS10* 10-Year, *DGS20* 20-Year, and *DGS30* 30-Year Treasury Constant Maturity Rate.
 
-```{r, message=FALSE, warning=F}
+```{r, message=FALSE, warning=FALSE}
 library(treasuryTR)
 
 yield_1y <- get_yields("DGS1")

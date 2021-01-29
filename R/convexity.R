@@ -24,6 +24,9 @@
 #'
 #' \eqn{M}{M} is the maturity in years (e.g. 10), \eqn{y_t}{t_y} is the yield at time \eqn{t}{t}.
 #'
+#' @return
+#' The convexity or a series of convexities of a bond with the given yield and maturity
+#'
 #' @export
 convexity <- function(yields, maturity, format_out = "xts") {
   if (!(format_out %in% c("xts", "tibble"))) {

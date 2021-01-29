@@ -6,7 +6,7 @@
 \usage{
 get_yields(
   series = "DGS10",
-  na_locf = T,
+  na_locf = TRUE,
   percent_adjust = T,
   format_out = "xts",
   ...
