@@ -1,9 +1,10 @@
 #' Load data from FRED
 #' @param series The series code as found on https://fred.stlouisfed.org/, see details
 #' @param ... Additional parameters handed to quantmod::getSymbols
-#' @param format_out ADD DOCUMENTATION
+#' @param format_out xts or tibble
 #' @param na_locf replace NA's with last observation
 #' @param percent_adjust divide raw data by 100
+#'
 #'
 #' @return The yields data as an xts object
 #'
@@ -31,10 +32,10 @@
 #' @examples
 #' # US 1-Month yields
 #' yields_us_1m <- get_yields(series = "DGS1MO")
-get_yields <- function(series = "DGS10", na_locf = T,
+get_yields <- function(series = "DGS10", na_locf = TRUE,
                        percent_adjust = T, format_out = "xts", ...) {
   yields <- quantmod::getSymbols(Symbols = series,
-                                 src = "FRED", auto.assign = F, ...)
+                                 src = "FRED", auto.assign = FALSE, ...)
   if (!(format_out %in% c("xts", "tibble"))) {
     stop("format_out has to be one of xts or tibble")
   }
