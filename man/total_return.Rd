@@ -54,6 +54,7 @@ and
 \eqn{M}{M} is the maturity in years (e.g. 10), \eqn{y_t}{y_t} is the yield at time \eqn{t}{t}
 }
 \examples{
+library(dplyr)
 # download US treasury 10Y constant-maturity
 #   yield data and compute a total return series
 t10_yield <- get_yields("DGS10")

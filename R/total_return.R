@@ -34,6 +34,7 @@
 #' @export
 #'
 #' @examples
+#' library(dplyr)
 #' # download US treasury 10Y constant-maturity
 #' #   yield data and compute a total return series
 #' t10_yield <- get_yields("DGS10")
