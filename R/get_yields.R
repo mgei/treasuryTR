@@ -33,7 +33,7 @@
 #' # US 1-Month yields
 #' yields_us_1m <- get_yields(series = "DGS1MO")
 get_yields <- function(series = "DGS10", na_locf = TRUE,
-                       percent_adjust = T, format_out = "xts", ...) {
+                       percent_adjust = TRUE, format_out = "xts", ...) {
   yields <- quantmod::getSymbols(Symbols = series,
                                  src = "FRED", auto.assign = FALSE, ...)
   if (!(format_out %in% c("xts", "tibble"))) {
