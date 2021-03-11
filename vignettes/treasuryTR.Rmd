@@ -23,21 +23,21 @@ knitr::opts_chunk$set(
 )
 ```
 
-The **treasuryTR** package offers the functionality to calculate the TR from constant-maturity bond yields.
+The **treasuryTR** package offers the functionality to calculate the total return (TR) index from constant-maturity bond yields.
 
-While Treasury yields are easy to come by[^FRED], total return (TR) indices are not. The TR is what is earned by investors, and is therefore of of paramount importance e.g. when simulating a treasury-stock diversified portfolio. A supplier for proprietary TR Treasury index data is CRSP[^CRSP]. Their data can be purchased or accesses trough a handful of commercial research platforms.
+While Treasury yields are easy to come by[^FRED], total returns (TR) are not. The TR is what is earned by investors, and is therefore of paramount importance e.g. when simulating a treasury-stock diversified portfolio. A supplier for proprietary TR Treasury index data is CRSP[^CRSP]. Their data can be purchased or accesses trough a handful of commercial research platforms.
 
 [^FRED]: E.g. on the Federal Reserve Bank of St. Louis's data portal "FRED", see https://fred.stlouisfed.org/series/DGS5 (5 year), https://fred.stlouisfed.org/series/DGS10 (10 year), https://fred.stlouisfed.org/series/DGS20 (20 years), https://fred.stlouisfed.org/series/DGS30 (30 years)  
 
 [^CRSP]: Center for Research in Security Prices, LLC, see http://www.crsp.org/
 
-The TR can be computed from publicly available (constant-maturity) yield-to-maturity using *standard (fixed-income) textbook formulas*. Swinkels 2019 compares the TR series with alternative series (CRSP, Bloomberg etc.) and find that the returns are very close and are therefore a high-quality alternative to commercially available data.
+The TR can be computed from publicly available (constant-maturity) yield-to-maturity time-series data using *standard (fixed-income) textbook formulas*. Swinkels 2019 compares the TR series with alternative series (CRSP, Bloomberg etc.) and finds that the returns are very close and are therefore a high-quality alternative to commercially available data.
 
 # Get yield data and compute TR
 
 ## Daily
 
-`get_yields()` relied on `quantmod::getSymbols()` and can be used for downloading constant-maturity US treasury returns.
+`get_yields()` relies on `quantmod::getSymbols()` and can be used for downloading constant-maturity US treasury returns.
 
 Common maturities are: *DGS1MO* 1-Month, *DGS3MO*: 3-Month, *DGS6MO*: 6-Month, *DGS1* 1-Year, *DGS2* 2-Year, *DGS3* 3-Year, *DGS5* 5-Year, *DGS7* 7-Year, *DGS10* 10-Year, *DGS20* 20-Year, and *DGS30* 30-Year Treasury Constant Maturity Rate.
 
@@ -58,11 +58,11 @@ library(PerformanceAnalytics)
 table.AnnualizedReturns(cbind.xts(tr_1y, tr_10y, tr_20y), Rf = tr_1y, scale = 262)
 ```
 
-In the example we above, we get yields for the 1-Year, the 10-Year, and the 20-Year treasuries. All of these yield series start in 1962. We calculate the TR using `total_return()`. It is worth noting that we use scale *261*, as this is the average number of days per year that the yield is reported on.
+In the example above, we get yields for the 1-Year, the 10-Year, and the 20-Year US treasury bonds. All of these yield series start in 1962. We calculate the TR using `total_return()`. It is worth noting that we use scale by *262*, as this is the average number of days per year that the yield is reported on. It might be different for other data sources.
 
 ## Monthly
 
-Swinkels (2019) compares the TR series he computes based on monthly 10-Year treasury yields to common treasury indices from CRSP, Global Financial Data, Ibbotson, and Bloomberg. He finds that 
+Swinkels (2019) compares the TR series he computes based on monthly 10-Year treasury yields to common treasury indices from CRSP, Global Financial Data, Ibbotson, and Bloomberg. He finds that the computed series are close to the reported indices.
 
 ```{r, fig.width=5}
 yield_10y_monthly <- yield_10y[endpoints(yield_10y, on = "months", k = 1)]
@@ -77,6 +77,8 @@ table.AnnualizedReturns(tr_10y_monthly, scale = 12)
 ```
 
 ## Dplyr style
+
+The treasuryTR package also allows for use in dplyr-style syntax.
 
 ```{r}
 library(dplyr)
