@@ -8,6 +8,7 @@ Description: Generate Total Returns (TR) from bond yield data with fixed maturit
   reported treasury yields. The generated TR series are very close to alternative series 
   that can be purchased (e.g. CRSP, Bloomberg), suggesting they are a high-quality 
   alternative for those, see Swinkels (2019) <doi:10.3390/data4030091>.
+URL: https://github.com/mgei/treasuryTR
 Depends: R (>= 3.2.0), quantmod, zoo, dplyr
 Imports: xts(>= 0.9-0), lubridate
 Suggests: PerformanceAnalytics, tidyr, ggplot2, dataseries, knitr, rmarkdown

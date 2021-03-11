@@ -7,7 +7,7 @@
 get_yields(
   series = "DGS10",
   na_locf = TRUE,
-  percent_adjust = T,
+  percent_adjust = TRUE,
   format_out = "xts",
   ...
 )
