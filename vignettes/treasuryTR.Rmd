@@ -45,8 +45,11 @@ Common maturities are: *DGS1MO* 1-Month, *DGS3MO*: 3-Month, *DGS6MO*: 6-Month, *
 library(treasuryTR)
 
 yield_1y <- get_yields("DGS1")
+Sys.sleep(1)
 yield_10y <- get_yields("DGS10")
+Sys.sleep(1)
 yield_20y <- get_yields("DGS20")
+Sys.sleep(1)
 
 tr_1y <- total_return(yield_1y, maturity = 1, scale = 261)
 tr_10y <- total_return(yield_10y, maturity = 10, scale = 261)
